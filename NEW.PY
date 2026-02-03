@@ -36,7 +36,7 @@ class ConversationMemory:
 class ProVoiceAgent:
     def __init__(self):
         # Configuration - Replace with your key
-        self.API_KEY = "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" 
+        self.API_KEY = "" 
         self.SAMPLE_RATE = 16000
         self.CHUNK_SIZE = 512 
         
