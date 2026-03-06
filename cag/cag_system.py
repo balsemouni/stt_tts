@@ -1,0 +1,606 @@
+"""
+CAG Architecture - System (Fresh Session + With Memory variants)
+
+Conversation flow is driven entirely by the LLM system prompt.
+No hard-coded stage machine.
+
+IMPROVEMENTS v2:
+- _aggressive_cleanup() (contains torch.cuda.synchronize) is NO LONGER called
+  inside query() or stream_query() hot-paths.  It caused 10-30 ms stutter per
+  response in TTS pipelines.  It is now only called in reset_conversation() and
+  cleanup() (cold paths where latency doesn't matter).
+- gc.collect() in query() replaced with a no-op comment (already handled by
+  cache_manager.truncate_to_knowledge).
+- stream_query() thread is marked daemon=True so it can't hang process exit.
+- Combined reset+query pattern: reset_and_query() / reset_and_stream() added
+  so the gateway can eliminate the separate POST /reset round-trip.
+- System prompt sourced from config.system_prompt (defaults to
+  COMPRESSED_SYSTEM_PROMPT defined in cag_config.py).
+"""
+
+import os
+import gc
+import torch
+from typing import Optional, Dict, Any, Generator
+from datetime import datetime
+
+from cag_config import CAGConfig, COMPRESSED_SYSTEM_PROMPT
+from gpu import free_gpu_smart, force_gpu, get_gpu_memory_info
+from model_loader import ModelLoader
+from knowledge_store import SolutionKnowledgeStore as KnowledgeStore
+from cache_manager import CacheManager
+from conversation_memory import ConversationMemory
+from transformers import TextIteratorStreamer
+from threading import Thread
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CAGSystemFreshSession
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CAGSystemFreshSession:
+    """
+    CAG System — Fresh Session Mode.
+
+    Each run starts with a clean conversation.  No history is written to disk.
+    The LLM (guided by the system prompt in config.system_prompt) manages the
+    conversation naturally without any hard-coded stage machine.
+    """
+
+    def __init__(self, config: Optional[CAGConfig] = None):
+        self.config = config or CAGConfig()
+        self.config.enable_cache_persistence = True
+
+        # Use compressed system prompt from config (can be overridden)
+        self.system_prompt: str = getattr(
+            self.config, "system_prompt", COMPRESSED_SYSTEM_PROMPT
+        )
+
+        # Core components populated during initialize()
+        self.model_loader    = None
+        self.knowledge_store = None
+        self.cache_manager   = None
+
+        # In-memory conversation — no disk persistence
+        self.memory = ConversationMemory(
+            config=self.config,
+            max_history=self.config.max_conversation_history,
+        )
+        self._disable_memory_persistence()
+
+        self.device          = None
+        self.model           = None
+        self.tokenizer       = None
+        self.is_initialized  = False
+        self.total_queries   = 0
+        self.session_start_time = None
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # System prompt
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def set_system_prompt(self, prompt: str):
+        """Replace the system prompt at runtime (no cache rebuild needed)."""
+        self.system_prompt = prompt
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Memory persistence control
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _disable_memory_persistence(self):
+        """Override save/load so conversation never touches disk."""
+        self.memory.save_memory = lambda: None
+        self.memory.load_memory = lambda: None
+        for path in (self.memory.conversation_file, self.memory.profile_file):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Initialization
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def initialize(self, force_cache_rebuild: bool = False):
+        self.session_start_time = datetime.now()
+
+        print("\n" + "=" * 70)
+        print("🚀 CAG SYSTEM — FRESH SESSION MODE")
+        print("=" * 70)
+
+        self._initialize_gpu()
+        self._load_model()
+        self._load_knowledge()
+        self._precompute_cache(force_rebuild=force_cache_rebuild)
+
+        self.is_initialized = True
+        print("\n✅ CAG SYSTEM READY")
+        self._print_system_status()
+
+    def _initialize_gpu(self):
+        print("\n📊 PHASE 1: GPU INITIALIZATION")
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = self.config.get_pytorch_alloc_config()
+        freed = free_gpu_smart(min_mem_mb=self.config.min_free_memory_mb)
+        print(f"✅ GPU cleanup: {freed} processes freed")
+        gc.collect()
+        torch.cuda.empty_cache()
+        self.device = force_gpu()
+
+    def _load_model(self):
+        print("\n📦 PHASE 2: MODEL LOADING")
+        self.model_loader = ModelLoader(self.config)
+        self.model, self.tokenizer = self.model_loader.load_model_and_tokenizer(self.device)
+        print("✅ Model and tokenizer loaded")
+
+    def _load_knowledge(self):
+        print("\n📚 PHASE 3: KNOWLEDGE BASE LOADING")
+        self.knowledge_store = KnowledgeStore(self.tokenizer, self.config)
+        entry_count = self.knowledge_store.load_from_sources()
+        print(f"✅ Loaded {entry_count:,} knowledge entries")
+        if self.config.verbose:
+            self.knowledge_store.preview_entries(n=3)
+
+    def _precompute_cache(self, force_rebuild: bool = False):
+        print("\n🎯 PHASE 4: CACHE PRECOMPUTATION")
+        knowledge_text = self.knowledge_store.build_knowledge_text(use_compact=True)
+        self.cache_manager = CacheManager(
+            self.model, self.tokenizer, self.device, self.config
+        )
+        cache_loaded = False
+        if not force_rebuild and self.config.enable_cache_persistence:
+            cache_loaded = self.cache_manager.load_cache()
+        if not cache_loaded:
+            self.cache_manager.precompute_cache(knowledge_text)
+            if self.config.enable_cache_persistence:
+                self.cache_manager.save_cache()
+                self.knowledge_store.save_metadata()
+        print("✅ Cache ready")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Core query path
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def query(self, user_message: str) -> Dict[str, Any]:
+        """
+        Process a single query using the pre-computed KV cache.
+
+        HOW CAG ACTUALLY WORKS:
+        The pre-computed cache holds the KV attention state for the
+        knowledge base tokens.  At query time we only tokenize the NEW
+        tokens (history + current question) and pass past_key_values so
+        the model can attend over the knowledge base without re-encoding it.
+        """
+        if not self.is_initialized:
+            raise ValueError("System not initialized. Call initialize() first.")
+
+        self.total_queries += 1
+
+        if not self.memory.user_profile.name:
+            name = self.memory.extract_name_from_response(user_message)
+            if name:
+                self.memory.set_user_name(name)
+
+        self.memory.add_message("user", user_message)
+
+        try:
+            query_text = self._build_query_suffix()
+            cache_state = self.cache_manager.cache_state
+            n_cached    = cache_state.knowledge_token_count
+            max_new_len = max(64, self.config.max_context_tokens - n_cached - 50)
+
+            inputs = self.tokenizer(
+                query_text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=max_new_len,
+            )
+            input_ids      = inputs.input_ids.to(self.device)
+            query_tokens   = input_ids.shape[-1]
+
+            # Full attention mask covers both cached tokens and new query tokens
+            full_attention_mask = torch.ones(
+                (1, n_cached + query_tokens), dtype=torch.long, device=self.device
+            )
+
+            with torch.no_grad():
+                with torch.amp.autocast("cuda"):
+                    output_ids = self.model.generate(
+                        input_ids=input_ids,
+                        attention_mask=full_attention_mask,
+                        past_key_values=cache_state.past_key_values,
+                        max_new_tokens=self.config.max_new_tokens,
+                        do_sample=False,
+                        temperature=None,
+                        top_p=None,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                        use_cache=True,
+                        num_beams=1,
+                        repetition_penalty=1.0,
+                        length_penalty=1.0,
+                    )
+
+            answer = self.tokenizer.decode(
+                output_ids[0][input_ids.shape[-1]:],
+                skip_special_tokens=True,
+            ).strip()
+
+            self.memory.add_message("assistant", answer)
+
+            del input_ids, output_ids, inputs, full_attention_mask
+            self.cache_manager.truncate_to_knowledge()
+
+            return {
+                "answer":       answer,
+                "query_number": self.total_queries,
+                "input_tokens": query_tokens,
+                "success":      True,
+                "user_name":    self.memory.user_profile.name,
+            }
+
+        except Exception as e:
+            return {
+                "answer":       f"Error: {e}",
+                "query_number": self.total_queries,
+                "success":      False,
+                "error":        str(e),
+            }
+
+    def stream_query(self, user_message: str) -> Generator[str, None, None]:
+        """
+        Stream response token-by-token using the pre-computed KV cache.
+        past_key_values is passed to model.generate() so the knowledge
+        base is attended to without re-encoding.
+        """
+        if not self.is_initialized:
+            raise ValueError("System not initialized. Call initialize() first.")
+
+        self.total_queries += 1
+
+        if not self.memory.user_profile.name:
+            name = self.memory.extract_name_from_response(user_message)
+            if name:
+                self.memory.set_user_name(name)
+
+        self.memory.add_message("user", user_message)
+
+        try:
+            query_text  = self._build_query_suffix()
+            cache_state = self.cache_manager.cache_state
+            n_cached    = cache_state.knowledge_token_count
+            max_new_len = max(64, self.config.max_context_tokens - n_cached - 50)
+
+            inputs = self.tokenizer(
+                query_text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=max_new_len,
+            )
+            input_ids   = inputs.input_ids.to(self.device)
+            query_tokens = input_ids.shape[-1]
+
+            full_attention_mask = torch.ones(
+                (1, n_cached + query_tokens), dtype=torch.long, device=self.device
+            )
+
+            streamer = TextIteratorStreamer(
+                self.tokenizer,
+                skip_prompt=True,
+                skip_special_tokens=True,
+                timeout=30.0,
+            )
+
+            gen_kwargs = {
+                "input_ids":          input_ids,
+                "attention_mask":     full_attention_mask,
+                "past_key_values":    cache_state.past_key_values,
+                "max_new_tokens":     self.config.max_new_tokens,
+                "streamer":           streamer,
+                "do_sample":          False,
+                "pad_token_id":       self.tokenizer.eos_token_id,
+                "eos_token_id":       self.tokenizer.eos_token_id,
+                "use_cache":          True,
+                "num_beams":          1,
+                "repetition_penalty": 1.0,
+                "length_penalty":     1.0,
+            }
+
+            thread = Thread(target=self._generate_thread, kwargs=gen_kwargs, daemon=True)
+            thread.start()
+
+            response_text = ""
+            try:
+                for chunk in streamer:
+                    if chunk:
+                        response_text += chunk
+                        yield chunk
+            except Exception as e:
+                print(f"\n❌ Streaming error: {e}")
+            finally:
+                thread.join(timeout=5.0)
+                if response_text:
+                    self.memory.add_message("assistant", response_text.strip())
+                del input_ids, inputs, full_attention_mask
+                self.cache_manager.truncate_to_knowledge()
+
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                self._aggressive_cleanup()
+                self.cache_manager.truncate_to_knowledge()
+                yield "\n[Error: GPU out of memory. Please try a shorter message.]"
+            else:
+                yield f"\n[Error: {e}]"
+        except Exception as e:
+            yield f"\n[Error: {e}]"
+
+    def reset_and_query(self, user_message: str) -> Dict[str, Any]:
+        """
+        Clear session history then run a batch query in a single call.
+        Saves one full HTTP round-trip vs. POST /reset → POST /chat.
+        """
+        self._fast_reset()
+        return self.query(user_message)
+
+    def reset_and_stream(self, user_message: str) -> Generator[str, None, None]:
+        """
+        Clear session history then stream a response in a single call.
+        Saves one full HTTP round-trip vs. POST /reset → POST /chat/stream.
+        """
+        self._fast_reset()
+        yield from self.stream_query(user_message)
+
+    def _fast_reset(self):
+        """
+        Lightweight reset: clears conversation history only.
+        Does NOT run synchronize() — safe to call on every voice turn.
+        """
+        self.memory.messages.clear()
+        self.total_queries = 0
+        if self.cache_manager:
+            self.cache_manager.truncate_to_knowledge()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Prompt building
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _build_query_suffix(self) -> str:
+        """
+        Build ONLY the new tokens the model needs to process:
+        conversation history (previous turns) + current user message.
+
+        The knowledge base prefix is already encoded in past_key_values
+        so we must NOT include it here — doing so would double-count it
+        and confuse the model's positional encoding.
+
+        Structure produced:
+          [history turn 1 user]
+          [history turn 1 assistant]
+          ...
+          [current user message]
+          <assistant header>   ← model generates from here
+        """
+        parts = []
+
+        # Previous turns (exclude the last message which is current user turn)
+        history = self.memory.messages[:-1]
+        for msg in history[-(self.config.max_conversation_history * 2):]:
+            if msg.role == "user":
+                parts.append(
+                    "<|start_header_id|>user<|end_header_id|>\n"
+                    f"{msg.content}<|eot_id|>"
+                )
+            else:
+                parts.append(
+                    "<|start_header_id|>assistant<|end_header_id|>\n"
+                    f"{msg.content}<|eot_id|>"
+                )
+
+        # Current user message (last in memory list)
+        current_query = self.memory.messages[-1].content
+        user_name     = self.memory.user_profile.name
+        display_query = f"[{user_name}] {current_query}" if user_name else current_query
+
+        parts.append(
+            "<|start_header_id|>user<|end_header_id|>\n"
+            + display_query
+            + "<|eot_id|>"
+        )
+
+        parts.append("<|start_header_id|>assistant<|end_header_id|>\n")
+
+        return "\n".join(parts)
+
+    def reset_conversation(self):
+        """Full reset: clears history, memory, and runs heavy GPU cleanup."""
+        if self.cache_manager:
+            self.cache_manager.truncate_to_knowledge()
+        self.memory.reset_all()
+        self.total_queries = 0
+        self._aggressive_cleanup()   # synchronize() OK here — cold path
+
+    def reset_session(self):
+        """Alias for reset_conversation() — backward compatibility."""
+        self.reset_conversation()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Stats / summary
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def get_stats(self) -> Dict[str, Any]:
+        if not self.is_initialized:
+            return {"initialized": False}
+        return {
+            "initialized":   self.is_initialized,
+            "total_queries": self.total_queries,
+            "knowledge": {
+                "entries": self.knowledge_store.get_entry_count(),
+                "tokens":  self.knowledge_store.get_token_count(),
+            },
+            "cache":   self.cache_manager.get_cache_info(),
+            "config": {
+                "max_context_tokens": self.config.max_context_tokens,
+                "max_new_tokens":     self.config.max_new_tokens,
+                "flash_attention":    self.config.use_flash_attention,
+            },
+            "gpu_memory":   get_gpu_memory_info(),
+            "session_mode": "fresh_session_no_persistence",
+            "memory":       self.memory.get_stats(),
+            "session_start": (
+                self.session_start_time.isoformat() if self.session_start_time else None
+            ),
+        }
+
+    def generate_session_summary(self) -> Dict[str, Any]:
+        """Ask the LLM to summarise the session (name + one-line summary)."""
+        if not self.is_initialized or not self.memory.messages:
+            return {"user_name": None, "llm_name": None, "summary": "No conversation to summarise."}
+
+        transcript = "\n".join(
+            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content}"
+            for m in self.memory.messages
+        )
+
+        summary_prompt = (
+            "<|begin_of_text|>"
+            "<|start_header_id|>system<|end_header_id|>\n"
+            "You are a precise conversation analyst. "
+            "Read the transcript and respond with EXACTLY two lines.\n"
+            "Line 1: Name: <user's first name, or 'Unknown'>\n"
+            "Line 2: Summary: <one concise sentence describing issue and outcome>\n"
+            "No other text."
+            "<|eot_id|>\n"
+            "<|start_header_id|>user<|end_header_id|>\n"
+            f"TRANSCRIPT:\n{transcript}\n"
+            "<|eot_id|>"
+            "<|start_header_id|>assistant<|end_header_id|>\n"
+        )
+
+        try:
+            inputs = self.tokenizer(
+                summary_prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.config.max_context_tokens,
+            )
+            input_ids      = inputs.input_ids.to(self.device)
+            attention_mask = inputs.attention_mask.to(self.device)
+
+            with torch.no_grad():
+                with torch.amp.autocast("cuda"):
+                    output_ids = self.model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=120,
+                        do_sample=False,
+                        temperature=None,
+                        top_p=None,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                        use_cache=True,
+                        num_beams=1,
+                    )
+
+            raw = self.tokenizer.decode(
+                output_ids[0][input_ids.shape[-1]:], skip_special_tokens=True
+            ).strip()
+
+            del input_ids, output_ids, attention_mask, inputs
+            self._aggressive_cleanup()   # cold path — synchronize OK
+
+            llm_name, summary = None, raw
+            for line in raw.splitlines():
+                line = line.strip()
+                if line.lower().startswith("name:"):
+                    candidate = line[5:].strip()
+                    if candidate.lower() not in {"unknown", "n/a", "none", ""}:
+                        llm_name = candidate
+                elif line.lower().startswith("summary:"):
+                    summary = line[8:].strip()
+
+            return {
+                "user_name": self.memory.user_profile.name,
+                "llm_name":  llm_name,
+                "summary":   summary,
+            }
+
+        except Exception as e:
+            return {
+                "user_name": self.memory.user_profile.name,
+                "llm_name":  None,
+                "summary":   f"[Summary generation failed: {e}]",
+            }
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Cleanup helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def cleanup(self):
+        if self.model is not None:
+            del self.model
+        if self.tokenizer is not None:
+            del self.tokenizer
+        self._aggressive_cleanup()
+        print("\n🧹 Cleaned up CAG system")
+
+    def print_cache_content(self):
+        if not self.cache_manager or not self.cache_manager.cache_state:
+            print("❌ Cache is empty or not initialized")
+            return
+        ids  = self.cache_manager.cache_state.input_ids[0]
+        text = self.tokenizer.decode(ids, skip_special_tokens=False)
+        print(text)
+        print(f"📏 Total Tokens: {len(ids)}")
+
+    def _generate_thread(self, **kw):
+        try:
+            with torch.no_grad():
+                with torch.amp.autocast("cuda"):
+                    self.model.generate(**kw)
+        except Exception as e:
+            print(f"\n❌ Generation thread error: {e}")
+
+    def _aggressive_cleanup(self):
+        """
+        Heavy cleanup: gc + empty_cache + synchronize.
+
+        Call only on COLD paths (reset, cleanup, session summary).
+        NEVER call inside query() or stream_query() — it blocks the GPU
+        pipeline and causes 10-30 ms stutter per response.
+        """
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+    def _print_system_status(self):
+        stats = self.get_stats()
+        print(f"\n📊 Knowledge entries: {stats['knowledge']['entries']:,}")
+        print(f"   Cache initialized: {stats['cache']['initialized']}")
+        print(f"   Flash Attention:   {stats['config']['flash_attention']}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CAGSystemWithMemory — persistent profile variant
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CAGSystemWithMemory(CAGSystemFreshSession):
+    """
+    Same as CAGSystemFreshSession except the user profile and conversation
+    history are saved to disk so the user's name is remembered across sessions.
+    """
+
+    def __init__(self, config: Optional[CAGConfig] = None):
+        super().__init__(config)
+        # Re-create memory WITH disk persistence (don't call _disable_memory_persistence)
+        self.memory = ConversationMemory(
+            config=self.config,
+            max_history=self.config.max_conversation_history,
+        )
+
+    def reset_all(self):
+        """Wipe everything including saved user profile."""
+        self.memory.reset_all()
+        self.total_queries = 0
+        if self.cache_manager:
+            self.cache_manager.truncate_to_knowledge()
+        self._aggressive_cleanup()
+        print("🗑️  All memory cleared (including user profile)")
