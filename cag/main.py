@@ -1,66 +1,45 @@
 """
-CAG Microservice — Gateway-Ready Entry Point  v3
-================================================
-FastAPI application wrapping CAGSystemFreshSession.
+CAG Microservice — Gateway-Ready Entry Point  v4.2
+==================================================
 
-IMPROVEMENTS v3 (over v2)
-─────────────────────────
-1. POST /chat and POST /chat/stream now accept an optional
-   `reset_session: bool = False` flag.
-   When set to True the CAG session history is cleared BEFORE processing
-   the query — eliminating the separate POST /reset round-trip entirely.
-   This removes one full HTTP + event-loop cycle from every voice turn.
+FIXES v4.2
+──────────
+ROOT CAUSE of tokens=0:
+  stream_query() is a synchronous generator that internally spawns its OWN
+  thread (via Thread + TextIteratorStreamer in cag_system.py/_generate_thread).
+  Wrapping it in run_in_executor() put the generator's for-loop in a thread-
+  pool worker, while _generate_thread ran in yet another thread — the
+  call_soon_threadsafe() inside stream_query fed tokens into the asyncio queue,
+  but the thread-pool worker was BLOCKED on `for chunk in streamer` and never
+  called loop.call_soon_threadsafe at all.  Result: 0 tokens, timeout every time.
 
-2. POST /reset is kept for backward compatibility but is now a thin wrapper
-   around CAGSystemFreshSession._fast_reset() (no synchronize, ~0 ms cost).
+  The fix: run a thin _producer() in the executor that iterates stream_query()
+  synchronously and pushes each token into the asyncio queue via
+  call_soon_threadsafe.  stream_query's own internal Thread handles the GPU
+  work; the executor thread is just a lightweight drainer.
 
-3. reset_session() in ServiceState is simplified — it calls _fast_reset()
-   directly instead of iterating over attribute names or rebuilding the
-   entire system.
-
-4. stream_query tokens get a trailing space so the gateway SentenceAccumulator
-   can concatenate them without guessing word boundaries.
-
-5. SSE response headers include Connection: keep-alive.
-
-6. One worker only (GPU not thread-safe). Scale at gateway level.
-
-Endpoints
-─────────
-  POST   /chat            — single-turn JSON (supports reset_session flag)
-  POST   /chat/stream     — single-turn SSE   (supports reset_session flag)
-  POST   /reset           — clear session history (fast, no sync)
-  GET    /health          — liveness probe
-  GET    /ready           — readiness probe
-  GET    /stats           — system stats
-
-Startup
-───────
-  uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
-
-Environment variables
-─────────────────────
-  CAG_MODEL_ID            HuggingFace model identifier
-  CAG_MAX_CONTEXT_TOKENS  token budget for knowledge cache
-  CAG_MAX_NEW_TOKENS      max tokens per response
-  CAG_CACHE_FILE          path to persisted .pt cache file
-  CAG_VERBOSE             "true" / "false"
-  CAG_PRESET              "default" | "large" | "fast" | "safe"
-  CAG_FLASH_ATTN          "true" / "false"  (default: true)
-  PORT                    HTTP port (default 8000)
+Other changes:
+  - TOKEN_TIMEOUT_S default raised 8s → 30s.
+  - gpu_lock released only after producer thread signals done.
 """
 
 import asyncio
+import collections
+import hashlib
 import logging
 import os
+import threading
+import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, Optional
+from statistics import mean, quantiles
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import torch
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from cag_config import CAGConfig, get_config_preset
@@ -74,22 +53,94 @@ logging.basicConfig(
 )
 log = logging.getLogger("cag.service")
 
+# ── Tunables from env ─────────────────────────────────────────────────────────
+
+DEDUP_WINDOW_S   = float(os.getenv("DEDUP_WINDOW_S",  "2.0"))
+TOKEN_TIMEOUT_S  = float(os.getenv("TOKEN_TIMEOUT_S", "30.0"))
+DEDUP_CACHE_SIZE = 4
+
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
+
+class _Metrics:
+    def __init__(self):
+        self._total_queries = 0
+        self._total_errors  = 0
+        self._latencies_ms  : collections.deque = collections.deque(maxlen=200)
+        self._lock          = threading.Lock()
+
+    def record(self, latency_ms: float, error: bool = False):
+        with self._lock:
+            self._total_queries += 1
+            if error:
+                self._total_errors += 1
+            self._latencies_ms.append(latency_ms)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            lats = list(self._latencies_ms)
+        avg = round(mean(lats), 1) if lats else 0.0
+        p95 = round(quantiles(lats, n=20)[18], 1) if len(lats) >= 20 else avg
+        return {
+            "total_queries":  self._total_queries,
+            "total_errors":   self._total_errors,
+            "avg_latency_ms": avg,
+            "p95_latency_ms": p95,
+        }
+
+
+metrics = _Metrics()
+
+
+# ── Dedup guard ───────────────────────────────────────────────────────────────
+
+class _DedupGuard:
+    def __init__(self, window_s: float = DEDUP_WINDOW_S, maxsize: int = DEDUP_CACHE_SIZE):
+        self._window  = window_s
+        self._maxsize = maxsize
+        self._cache   : collections.OrderedDict[str, float] = collections.OrderedDict()
+        self._lock    = threading.Lock()
+
+    def _key(self, text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def is_duplicate(self, query: str) -> bool:
+        key = self._key(query)
+        now = time.monotonic()
+        with self._lock:
+            if key in self._cache:
+                if now - self._cache[key] < self._window:
+                    return True
+            self._cache[key] = now
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._maxsize:
+                self._cache.popitem(last=False)
+        return False
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+
+
+dedup = _DedupGuard()
+
 
 # ── Service state ─────────────────────────────────────────────────────────────
 
 class ServiceState:
     def __init__(self):
-        self.config    : Optional[CAGConfig]            = None
+        self.config    : Optional[CAGConfig]             = None
         self.cag       : Optional[CAGSystemFreshSession] = None
         self.ready     = False
-        self.boot_time : Optional[datetime]             = None
+        self.boot_time : Optional[datetime]              = None
         self._gpu_lock = asyncio.Lock()
 
     async def startup(self):
         log.info("=== CAG SERVICE STARTUP ===")
         preset = os.getenv("CAG_PRESET", "").strip()
         self.config = get_config_preset(preset) if preset else CAGConfig.from_env()
-        self.cag    = CAGSystemFreshSession(self.config)
+        _validate_config(self.config)
+        self.cag       = CAGSystemFreshSession(self.config)
         await asyncio.get_event_loop().run_in_executor(None, self.cag.initialize)
         self.ready     = True
         self.boot_time = datetime.utcnow()
@@ -103,23 +154,26 @@ class ServiceState:
         log.info("Cleanup done.")
 
     def reset_session(self):
-        """
-        Lightweight session reset — no synchronize(), safe to call every turn.
-
-        Uses CAGSystemFreshSession._fast_reset() which only clears the
-        in-memory message list and truncates the KV cache tensor slices.
-        """
         if self.cag is None:
             return
         try:
             self.cag._fast_reset()
-            log.info("CAG session reset via _fast_reset()")
         except Exception as e:
             log.warning(f"Fast reset failed ({e}), trying full reset")
             try:
                 self.cag.reset_conversation()
             except Exception as e2:
                 log.error(f"Full reset also failed: {e2}")
+
+
+def _validate_config(cfg: CAGConfig):
+    errors: List[str] = []
+    if getattr(cfg, "max_new_tokens", 1) < 1:
+        errors.append("max_new_tokens must be >= 1")
+    if getattr(cfg, "max_context_tokens", 1) < 64:
+        errors.append("max_context_tokens must be >= 64")
+    if errors:
+        raise RuntimeError("CAGConfig validation failed: " + "; ".join(errors))
 
 
 svc = ServiceState()
@@ -138,8 +192,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Ask Novation — CAG Inference Service",
-    description="LLM-powered solution recommendation chatbot (CAG architecture).",
-    version="3.0.0",
+    version="4.2.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -158,20 +211,15 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4096)
-    reset_session: bool = Field(
-        default=False,
-        description=(
-            "When True the session history is cleared before processing this message. "
-            "Set to True on every new voice turn to prevent the model re-broadcasting "
-            "stale context and eliminate the separate POST /reset round-trip."
-        ),
-    )
+    reset_session: bool = Field(default=True)
+    turn_id: Optional[str] = Field(default=None)
 
 
 class ChatResponse(BaseModel):
     answer       : str
     user_name    : Optional[str] = None
     query_number : int
+    turn_id      : str
     success      : bool
 
 
@@ -179,6 +227,7 @@ class HealthResponse(BaseModel):
     status         : str
     uptime_seconds : Optional[float]
     gpu_free_mb    : Optional[int]
+    gpu_temp_c     : Optional[int]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -191,6 +240,19 @@ def _assert_ready():
         )
 
 
+def _make_turn_id(client_id: Optional[str]) -> str:
+    return client_id or str(uuid.uuid4())
+
+
+def _gpu_temp() -> Optional[int]:
+    try:
+        if torch.cuda.is_available():
+            return torch.cuda.temperature()
+    except Exception:
+        pass
+    return None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["ops"])
@@ -201,7 +263,12 @@ async def health():
     uptime = None
     if svc.boot_time:
         uptime = (datetime.utcnow() - svc.boot_time).total_seconds()
-    return HealthResponse(status="ok", uptime_seconds=uptime, gpu_free_mb=gpu_free)
+    return HealthResponse(
+        status="ok",
+        uptime_seconds=uptime,
+        gpu_free_mb=gpu_free,
+        gpu_temp_c=_gpu_temp(),
+    )
 
 
 @app.get("/ready", tags=["ops"])
@@ -227,6 +294,7 @@ async def stats():
             "total_mb":        total_mb,
             "used_mb":         total_mb - free_mb,
             "utilization_pct": round((total_mb - free_mb) / total_mb * 100, 1),
+            "temp_c":          _gpu_temp(),
         }
     return {
         "knowledge_entries":      base_stats.get("knowledge", {}).get("entries", 0),
@@ -240,19 +308,32 @@ async def stats():
     }
 
 
-# ── Reset (fast, no synchronize) ──────────────────────────────────────────────
+@app.get("/metrics", tags=["ops"], response_class=PlainTextResponse)
+async def prometheus_metrics():
+    snap = metrics.snapshot()
+    lines = [
+        "# HELP cag_total_queries Total number of inference requests",
+        "# TYPE cag_total_queries counter",
+        f"cag_total_queries {snap['total_queries']}",
+        "# HELP cag_total_errors Total number of failed requests",
+        "# TYPE cag_total_errors counter",
+        f"cag_total_errors {snap['total_errors']}",
+        "# HELP cag_avg_latency_ms Average inference latency (ms, last 200 samples)",
+        "# TYPE cag_avg_latency_ms gauge",
+        f"cag_avg_latency_ms {snap['avg_latency_ms']}",
+        "# HELP cag_p95_latency_ms P95 inference latency (ms, last 200 samples)",
+        "# TYPE cag_p95_latency_ms gauge",
+        f"cag_p95_latency_ms {snap['p95_latency_ms']}",
+    ]
+    return "\n".join(lines) + "\n"
+
 
 @app.post("/reset", tags=["chat"])
 async def reset_session():
-    """
-    Clear the CAG conversation history (lightweight — no GPU sync).
-
-    Kept for backward compatibility.  For new integrations, prefer sending
-    `reset_session: true` inside the chat request to save a round-trip.
-    """
     _assert_ready()
     async with svc._gpu_lock:
         await asyncio.get_event_loop().run_in_executor(None, svc.reset_session)
+    dedup.clear()
     log.info("CAG session reset via /reset")
     return {"reset": True}
 
@@ -261,33 +342,46 @@ async def reset_session():
 
 @app.post("/chat", response_model=ChatResponse, tags=["chat"])
 async def chat(req: ChatRequest):
-    """
-    Single-turn chat — full JSON response.
-
-    Set `reset_session: true` to clear history before this query (saves the
-    separate POST /reset call).
-    """
     _assert_ready()
+    turn_id = _make_turn_id(req.turn_id)
 
-    async with svc._gpu_lock:
-        if req.reset_session:
-            await asyncio.get_event_loop().run_in_executor(None, svc.reset_session)
-
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, svc.cag.query, req.message
-        )
-
-    if not result.get("success"):
+    if dedup.is_duplicate(req.message):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=result.get("error", "Inference error"),
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "duplicate_query", "turn_id": turn_id},
         )
-    return ChatResponse(
-        answer       = result["answer"],
-        user_name    = result.get("user_name"),
-        query_number = result["query_number"],
-        success      = True,
-    )
+
+    t0         = time.monotonic()
+    error_flag = False
+    try:
+        async with svc._gpu_lock:
+            if req.reset_session:
+                await asyncio.get_event_loop().run_in_executor(None, svc.reset_session)
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, svc.cag.query, req.message
+            )
+
+        if not result.get("success"):
+            error_flag = True
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Inference error"),
+            )
+
+        log.info(
+            f"[turn:{turn_id}] chat OK "
+            f"q={len(req.message)}ch "
+            f"lat={round((time.monotonic()-t0)*1000)}ms"
+        )
+        return ChatResponse(
+            answer       = result["answer"],
+            user_name    = result.get("user_name"),
+            query_number = result["query_number"],
+            turn_id      = turn_id,
+            success      = True,
+        )
+    finally:
+        metrics.record((time.monotonic() - t0) * 1000, error=error_flag)
 
 
 # ── Chat (streaming SSE) ──────────────────────────────────────────────────────
@@ -297,54 +391,130 @@ async def chat_stream(req: ChatRequest):
     """
     Single-turn streaming chat via Server-Sent Events.
 
-    Set `reset_session: true` to clear history before streaming (saves the
-    separate POST /reset call).
+    Token format:    data: <token>\\n\\n
+    Turn header:     data: [TURN_ID] <uuid>\\n\\n   ← first event
+    Done signal:     data: [DONE]\\n\\n
+    Error signal:    data: [ERROR] <message>\\n\\n
+    Timeout signal:  data: [TIMEOUT]\\n\\n
 
-    Token format:   data: <token>\\n\\n
-    Done signal:    data: [DONE]\\n\\n
-    Error signal:   data: [ERROR] <message>\\n\\n
+    KEY DESIGN NOTE
+    ───────────────
+    stream_query() is a sync generator that internally spawns its own Thread
+    (via TextIteratorStreamer + _generate_thread in cag_system.py).
+
+    We run a thin _producer() in run_in_executor — it iterates stream_query()
+    synchronously and forwards each token to the asyncio queue via
+    call_soon_threadsafe.  The GPU work stays on stream_query's daemon Thread.
+
+    Do NOT call stream_query() inside an async for loop directly — it would
+    block the event loop on the TextIteratorStreamer.
     """
     _assert_ready()
+    turn_id = _make_turn_id(req.turn_id)
+
+    if dedup.is_duplicate(req.message):
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"error": "duplicate_query", "turn_id": turn_id},
+        )
 
     async def _event_generator() -> AsyncGenerator[str, None]:
-        loop = asyncio.get_event_loop()
-        q: asyncio.Queue = asyncio.Queue()
+        loop         = asyncio.get_event_loop()
+        q            : asyncio.Queue = asyncio.Queue()
+        cancel_event = threading.Event()
+        t0           = time.monotonic()
+        token_count  = [0]
+        error_flag   = [False]
+
+        # ── Turn-id header (gateway correlation) ──────────────────────────
+        yield f"data: [TURN_ID] {turn_id}\n\n"
 
         def _producer():
-            # Optional fast reset inside the same GPU lock window
-            if req.reset_session:
-                svc.reset_session()
+            """
+            Thread-pool worker: drains stream_query() and forwards tokens.
+            stream_query() manages its own GPU thread internally.
+            """
             try:
-                for token in svc.cag.stream_query(req.message):
-                    # Trailing space helps the gateway SentenceAccumulator
-                    # join tokens without guessing word boundaries.
-                    loop.call_soon_threadsafe(q.put_nowait, ("token", token))
+                if req.reset_session:
+                    svc.reset_session()
+
+                for chunk in svc.cag.stream_query(req.message):
+                    if cancel_event.is_set():
+                        log.info(f"[turn:{turn_id}] stream cancelled by client")
+                        break
+                    if chunk:
+                        token_count[0] += 1
+                        loop.call_soon_threadsafe(q.put_nowait, ("token", chunk))
+
             except Exception as exc:
+                error_flag[0] = True
                 loop.call_soon_threadsafe(q.put_nowait, ("error", str(exc)))
             finally:
                 loop.call_soon_threadsafe(q.put_nowait, ("done", None))
 
-        async with svc._gpu_lock:
-            loop.run_in_executor(None, _producer)
-            while True:
-                kind, value = await q.get()
-                if kind == "token":
-                    yield f"data: {value}\n\n"
-                elif kind == "error":
-                    yield f"data: [ERROR] {value}\n\n"
-                    break
-                else:
-                    break
+        try:
+            async with svc._gpu_lock:
+                producer_future = loop.run_in_executor(None, _producer)
 
-        yield "data: [DONE]\n\n"
+                try:
+                    while True:
+                        try:
+                            kind, value = await asyncio.wait_for(
+                                q.get(), timeout=TOKEN_TIMEOUT_S
+                            )
+                        except asyncio.TimeoutError:
+                            log.warning(
+                                f"[turn:{turn_id}] token timeout after {TOKEN_TIMEOUT_S}s"
+                            )
+                            cancel_event.set()
+                            error_flag[0] = True
+                            yield f"data: [TIMEOUT]\n\n"
+                            break
+
+                        if kind == "token":
+                            yield f"data: {value}\n\n"
+                        elif kind == "error":
+                            log.error(f"[turn:{turn_id}] producer error: {value}")
+                            yield f"data: [ERROR] {value}\n\n"
+                            break
+                        else:  # "done"
+                            break
+
+                finally:
+                    # Always signal stop and wait for the producer thread to
+                    # finish before releasing the GPU lock.
+                    cancel_event.set()
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.wrap_future(producer_future), timeout=10.0
+                        )
+                    except Exception:
+                        pass
+
+        except asyncio.CancelledError:
+            cancel_event.set()
+            log.info(f"[turn:{turn_id}] stream cancelled (client disconnect)")
+            return
+
+        finally:
+            lat_ms = (time.monotonic() - t0) * 1000
+            metrics.record(lat_ms, error=error_flag[0])
+            log.info(
+                f"[turn:{turn_id}] stream done "
+                f"tokens={token_count[0]} "
+                f"lat={round(lat_ms)}ms"
+            )
+
+        yield f"data: [DONE]\n\n"
 
     return StreamingResponse(
         _event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
-            "Connection":       "keep-alive",   # Important for TTS clients
-            "X-Accel-Buffering": "no",          # Disable Nginx buffering
+            "Cache-Control":     "no-cache",
+            "Connection":        "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-Turn-Id":         turn_id,
         },
     )
 

@@ -58,7 +58,6 @@ class STTPipeline:
         # VAD
         idle_threshold: float        = 0.15,
         barge_in_threshold: float    = 0.40,
-        enable_noise_reduction: bool = False,
         vad_pre_gain: float          = 5.0,
         # ASR
         whisper_model_size: str      = "base.en",
@@ -73,8 +72,7 @@ class STTPipeline:
         enable_aec: bool             = True,
         # Enrollment
         enable_enrollment: bool      = True,
-        enroll_min_seconds: float    = 0.5,
-        similarity_threshold: float  = 0.72,
+        similarity_threshold: float  = 0.65,   # v6: loosened for first-chunk anchor
         # Compat params (ignored)
         ai_detector_model_path=None,
         ai_detection_threshold=0.7,
@@ -92,12 +90,23 @@ class STTPipeline:
         self._last_is_voice = False
         self._words_this_utterance: List[str] = []
 
+        # ── Enrollment audio replay buffer ────────────────────────────────────
+        # Accumulates voice chunks DURING enrollment so they can be replayed
+        # into ASR the moment the profile locks.  Without this, all speech
+        # spoken while the voice print was being built is lost to ASR.
+        self._pre_enroll_buffer: List[np.ndarray] = []
+        self._was_enrolled: bool = False          # tracks enrollment state transitions
+
+        # ── Latency tracking ──────────────────────────────────────────────
+        # Measures: time from first voice chunk → segment event fires
+        self._utterance_start_ts: Optional[float] = None   # monotonic, set on first voice chunk
+        self._latency_history: List[float] = []            # ms, one entry per segment
+
         self.vad = VoiceActivityDetector(
             sample_rate            = sample_rate,
             device                 = _device,
             idle_threshold         = idle_threshold,
             barge_in_threshold     = barge_in_threshold,
-            enable_noise_reduction = enable_noise_reduction,
             pre_gain               = vad_pre_gain,
         )
 
@@ -117,7 +126,7 @@ class STTPipeline:
             SpeakerEnrollmentService(
                 sample_rate          = sample_rate,
                 similarity_threshold = similarity_threshold,
-                enroll_min_seconds   = enroll_min_seconds,
+                # v6: no enroll_min_seconds — profile locks on first voice chunk
             )
             if enable_enrollment else None
         )
@@ -166,8 +175,36 @@ class STTPipeline:
         # ── Step 3: Enrollment ────────────────────────────────────────────
         block_asr = False
         if self.enrollment:
+            # Accumulate voice chunks into replay buffer BEFORE evaluating,
+            # so we always have the audio available if the profile locks this chunk.
+            if is_voice and not self._was_enrolled:
+                self._pre_enroll_buffer.append(audio.copy())
+
             decision = self.enrollment.evaluate(audio, is_voice=is_voice)
             events.append({"type": "enrollment", **decision.to_dict()})
+
+            # ── Detect the lock transition ────────────────────────────────
+            # is_enrolled just flipped True → replay all buffered voice audio
+            # into ASR so speech spoken during enrollment is not lost.
+            just_locked = decision.enrolled and not self._was_enrolled
+            if just_locked:
+                self._was_enrolled = True
+                logger.info(
+                    f"[pipeline] Voice profile locked — replaying "
+                    f"{len(self._pre_enroll_buffer)} pre-enroll chunks into ASR"
+                )
+                if self._utterance_start_ts is None and self._pre_enroll_buffer:
+                    self._utterance_start_ts = time.monotonic()
+                for buffered_chunk in self._pre_enroll_buffer:
+                    replay_result = self.realtime_asr.transcribe_chunk(buffered_chunk)
+                    for word in replay_result.get("words", []):
+                        w = word if isinstance(word, str) else word.get("word", "")
+                        w = w.strip().strip(".,!?;:")
+                        if w and any(c.isalpha() for c in w):
+                            self._words_this_utterance.append(w)
+                            events.append({"type": "word", "word": w})
+                self._pre_enroll_buffer.clear()
+                events.append({"type": "enrollment_locked"})
 
             if decision.enrolled and not decision.send_to_asr:
                 block_asr = True
@@ -188,6 +225,9 @@ class STTPipeline:
         # words to fall into a gap between pipeline's buffer drain and ASR's
         # flush on short sentences.
         if is_voice and not block_asr:
+            # Stamp the start of this utterance on the very first voice chunk
+            if self._utterance_start_ts is None:
+                self._utterance_start_ts = time.monotonic()
             result = self.realtime_asr.transcribe_chunk(audio)
 
             partial = result.get("partial", "").strip()
@@ -228,8 +268,25 @@ class STTPipeline:
 
             if self._words_this_utterance:
                 text = " ".join(self._words_this_utterance)
-                events.append({"type": "segment", "text": text})
-                logger.info(f"[pipeline] segment: {text!r}")
+
+                # ── Latency measurement ───────────────────────────────────
+                latency_ms: Optional[float] = None
+                if self._utterance_start_ts is not None:
+                    latency_ms = (time.monotonic() - self._utterance_start_ts) * 1000
+                    self._latency_history.append(latency_ms)
+                    avg_ms = sum(self._latency_history) / len(self._latency_history)
+                    print(
+                        f"\n┌─ ASR Latency Report ({'#'+str(len(self._latency_history))})\n"
+                        f"│  Text    : {text!r}\n"
+                        f"│  Latency : {latency_ms:>7.1f} ms  ← voice-start → segment\n"
+                        f"│  Average : {avg_ms:>7.1f} ms  (over {len(self._latency_history)} sentence(s))\n"
+                        f"└{'─'*45}"
+                    )
+                self._utterance_start_ts = None   # reset for next utterance
+                # ─────────────────────────────────────────────────────────
+
+                events.append({"type": "segment", "text": text, "latency_ms": latency_ms})
+                logger.info(f"[pipeline] segment: {text!r}  latency={latency_ms:.0f}ms" if latency_ms else f"[pipeline] segment: {text!r}")
 
             self._words_this_utterance.clear()
 
@@ -263,6 +320,9 @@ class STTPipeline:
         self._last_is_voice = False
         self._words_this_utterance.clear()
         self._ai_speaking = False
+        self._utterance_start_ts = None
+        self._pre_enroll_buffer.clear()
+        self._was_enrolled = False
         if self.aec:
             self.aec.reset()
         if self.enrollment:
@@ -274,4 +334,12 @@ class STTPipeline:
             stats["aec"] = self.aec.get_stats()
         if self.enrollment:
             stats["enrollment"] = self.enrollment.get_stats()
+        if self._latency_history:
+            stats["latency"] = {
+                "last_ms":    round(self._latency_history[-1], 1),
+                "avg_ms":     round(sum(self._latency_history) / len(self._latency_history), 1),
+                "min_ms":     round(min(self._latency_history), 1),
+                "max_ms":     round(max(self._latency_history), 1),
+                "samples":    len(self._latency_history),
+            }
         return stats

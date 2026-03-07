@@ -16,6 +16,10 @@ IMPROVEMENTS v2:
   so the gateway can eliminate the separate POST /reset round-trip.
 - System prompt sourced from config.system_prompt (defaults to
   COMPRESSED_SYSTEM_PROMPT defined in cag_config.py).
+
+FIX v3:
+- Added Event to threading import (was causing NameError: name 'threading'
+  is not defined when stream_query() called threading.Event()).
 """
 
 import os
@@ -31,7 +35,7 @@ from knowledge_store import SolutionKnowledgeStore as KnowledgeStore
 from cache_manager import CacheManager
 from conversation_memory import ConversationMemory
 from transformers import TextIteratorStreamer
-from threading import Thread
+from threading import Thread, Event          # ← FIX: added Event
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -163,13 +167,13 @@ class CAGSystemFreshSession:
 
     def query(self, user_message: str) -> Dict[str, Any]:
         """
-        Process a single query using the pre-computed KV cache.
+        Process a single query by building the full prompt (knowledge prefix +
+        conversation history + current question) and running a standard
+        model.generate() call — no past_key_values injection.
 
-        HOW CAG ACTUALLY WORKS:
-        The pre-computed cache holds the KV attention state for the
-        knowledge base tokens.  At query time we only tokenize the NEW
-        tokens (history + current question) and pass past_key_values so
-        the model can attend over the knowledge base without re-encoding it.
+        This is robust against quantized-model cache-mutation bugs and avoids
+        the index-out-of-bounds errors that arise when DynamicCache is passed
+        directly into generate() with 4-bit models.
         """
         if not self.is_initialized:
             raise ValueError("System not initialized. Call initialize() first.")
@@ -184,56 +188,44 @@ class CAGSystemFreshSession:
         self.memory.add_message("user", user_message)
 
         try:
-            query_text = self._build_query_suffix()
-            cache_state = self.cache_manager.cache_state
-            n_cached    = cache_state.knowledge_token_count
-            max_new_len = max(64, self.config.max_context_tokens - n_cached - 50)
+            full_prompt = self._build_full_prompt()
 
             inputs = self.tokenizer(
-                query_text,
+                full_prompt,
                 return_tensors="pt",
                 truncation=True,
-                max_length=max_new_len,
+                max_length=self.config.max_context_tokens,
             )
             input_ids      = inputs.input_ids.to(self.device)
-            query_tokens   = input_ids.shape[-1]
-
-            # Full attention mask covers both cached tokens and new query tokens
-            full_attention_mask = torch.ones(
-                (1, n_cached + query_tokens), dtype=torch.long, device=self.device
-            )
+            attention_mask = inputs.attention_mask.to(self.device)
+            prompt_len     = input_ids.shape[-1]
 
             with torch.no_grad():
                 with torch.amp.autocast("cuda"):
                     output_ids = self.model.generate(
                         input_ids=input_ids,
-                        attention_mask=full_attention_mask,
-                        past_key_values=cache_state.past_key_values,
+                        attention_mask=attention_mask,
                         max_new_tokens=self.config.max_new_tokens,
                         do_sample=False,
-                        temperature=None,
-                        top_p=None,
                         pad_token_id=self.tokenizer.eos_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
                         use_cache=True,
                         num_beams=1,
                         repetition_penalty=1.0,
-                        length_penalty=1.0,
                     )
 
             answer = self.tokenizer.decode(
-                output_ids[0][input_ids.shape[-1]:],
+                output_ids[0][prompt_len:],
                 skip_special_tokens=True,
             ).strip()
 
             self.memory.add_message("assistant", answer)
-
-            del input_ids, output_ids, inputs, full_attention_mask
-            self.cache_manager.truncate_to_knowledge()
+            del input_ids, attention_mask, output_ids, inputs
 
             return {
                 "answer":       answer,
                 "query_number": self.total_queries,
-                "input_tokens": query_tokens,
+                "input_tokens": prompt_len,
                 "success":      True,
                 "user_name":    self.memory.user_profile.name,
             }
@@ -248,9 +240,12 @@ class CAGSystemFreshSession:
 
     def stream_query(self, user_message: str) -> Generator[str, None, None]:
         """
-        Stream response token-by-token using the pre-computed KV cache.
-        past_key_values is passed to model.generate() so the knowledge
-        base is attended to without re-encoding.
+        Stream response token-by-token.
+
+        Builds the complete prompt (system + knowledge base + conversation
+        history + current message) and streams using TextIteratorStreamer +
+        a daemon Thread.  No past_key_values injection — avoids the
+        DynamicCache mutation / index-out-of-bounds bug with 4-bit models.
         """
         if not self.is_initialized:
             raise ValueError("System not initialized. Call initialize() first.")
@@ -265,35 +260,27 @@ class CAGSystemFreshSession:
         self.memory.add_message("user", user_message)
 
         try:
-            query_text  = self._build_query_suffix()
-            cache_state = self.cache_manager.cache_state
-            n_cached    = cache_state.knowledge_token_count
-            max_new_len = max(64, self.config.max_context_tokens - n_cached - 50)
+            full_prompt = self._build_full_prompt()
 
             inputs = self.tokenizer(
-                query_text,
+                full_prompt,
                 return_tensors="pt",
                 truncation=True,
-                max_length=max_new_len,
+                max_length=self.config.max_context_tokens,
             )
-            input_ids   = inputs.input_ids.to(self.device)
-            query_tokens = input_ids.shape[-1]
-
-            full_attention_mask = torch.ones(
-                (1, n_cached + query_tokens), dtype=torch.long, device=self.device
-            )
+            input_ids      = inputs.input_ids.to(self.device)
+            attention_mask = inputs.attention_mask.to(self.device)
 
             streamer = TextIteratorStreamer(
                 self.tokenizer,
                 skip_prompt=True,
                 skip_special_tokens=True,
-                timeout=30.0,
+                timeout=None,
             )
 
             gen_kwargs = {
                 "input_ids":          input_ids,
-                "attention_mask":     full_attention_mask,
-                "past_key_values":    cache_state.past_key_values,
+                "attention_mask":     attention_mask,
                 "max_new_tokens":     self.config.max_new_tokens,
                 "streamer":           streamer,
                 "do_sample":          False,
@@ -302,10 +289,25 @@ class CAGSystemFreshSession:
                 "use_cache":          True,
                 "num_beams":          1,
                 "repetition_penalty": 1.0,
-                "length_penalty":     1.0,
             }
 
-            thread = Thread(target=self._generate_thread, kwargs=gen_kwargs, daemon=True)
+            done_event = Event()
+
+            def _gen_thread():
+                try:
+                    with torch.no_grad():
+                        with torch.amp.autocast("cuda"):
+                            self.model.generate(**gen_kwargs)
+                except Exception as e:
+                    print(f"\n❌ Generation thread error: {e}")
+                    try:
+                        streamer.end()
+                    except Exception:
+                        pass
+                finally:
+                    done_event.set()
+
+            thread = Thread(target=_gen_thread, daemon=True)
             thread.start()
 
             response_text = ""
@@ -317,16 +319,15 @@ class CAGSystemFreshSession:
             except Exception as e:
                 print(f"\n❌ Streaming error: {e}")
             finally:
+                done_event.wait(timeout=120.0)
                 thread.join(timeout=5.0)
                 if response_text:
                     self.memory.add_message("assistant", response_text.strip())
-                del input_ids, inputs, full_attention_mask
-                self.cache_manager.truncate_to_knowledge()
+                del input_ids, attention_mask, inputs
 
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
                 self._aggressive_cleanup()
-                self.cache_manager.truncate_to_knowledge()
                 yield "\n[Error: GPU out of memory. Please try a shorter message.]"
             else:
                 yield f"\n[Error: {e}]"
@@ -363,25 +364,36 @@ class CAGSystemFreshSession:
     # Prompt building
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _build_query_suffix(self) -> str:
+    def _build_full_prompt(self) -> str:
         """
-        Build ONLY the new tokens the model needs to process:
-        conversation history (previous turns) + current user message.
+        Build the complete prompt for a single inference call:
 
-        The knowledge base prefix is already encoded in past_key_values
-        so we must NOT include it here — doing so would double-count it
-        and confuse the model's positional encoding.
+          <s>  system prompt + knowledge base  </s>
+          [conversation history turns]
+          <user>  current message  </user>
+          <assistant>              ← model generates from here
 
-        Structure produced:
-          [history turn 1 user]
-          [history turn 1 assistant]
-          ...
-          [current user message]
-          <assistant header>   ← model generates from here
+        This is the safe, straightforward approach: the full knowledge text
+        is included in every call so we never need to inject past_key_values
+        manually (which is fragile with 4-bit quantized models).
         """
-        parts = []
+        # ── Decode the knowledge base stored in the pre-computed cache ─────
+        cache_state    = self.cache_manager.cache_state
+        knowledge_text = self.tokenizer.decode(
+            cache_state.input_ids[0], skip_special_tokens=True
+        )
 
-        # Previous turns (exclude the last message which is current user turn)
+        # ── System block ───────────────────────────────────────────────────
+        parts = [
+            "<|begin_of_text|>"
+            "<|start_header_id|>system<|end_header_id|>\n"
+            + self.system_prompt
+            + "\n\n══ KNOWLEDGE BASE ══\n"
+            + knowledge_text
+            + "<|eot_id|>"
+        ]
+
+        # ── Conversation history (all but the last/current user message) ───
         history = self.memory.messages[:-1]
         for msg in history[-(self.config.max_conversation_history * 2):]:
             if msg.role == "user":
@@ -395,7 +407,7 @@ class CAGSystemFreshSession:
                     f"{msg.content}<|eot_id|>"
                 )
 
-        # Current user message (last in memory list)
+        # ── Current user message ───────────────────────────────────────────
         current_query = self.memory.messages[-1].content
         user_name     = self.memory.user_profile.name
         display_query = f"[{user_name}] {current_query}" if user_name else current_query
@@ -406,6 +418,7 @@ class CAGSystemFreshSession:
             + "<|eot_id|>"
         )
 
+        # ── Assistant header — model generates from here ───────────────────
         parts.append("<|start_header_id|>assistant<|end_header_id|>\n")
 
         return "\n".join(parts)

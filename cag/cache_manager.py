@@ -2,21 +2,21 @@
 CAG Architecture - Cache Manager Module for Solution Recommendations
 Manages KV cache lifecycle with truncation and persistence
 
-IMPROVEMENTS v2:
-- truncate_to_knowledge(): torch.cuda.synchronize() and gc.collect() removed.
-  This runs after EVERY query — calling synchronize() here blocked the GPU
-  pipeline for 10-30 ms between responses, causing audible stutter in TTS.
-  GPU memory is NOT freed by slicing tensors anyway, so the calls were pure overhead.
-- _cleanup_memory() is unchanged (still used at startup/shutdown where latency
-  doesn't matter).
-- Handles both legacy tuple PKV and newer DynamicCache objects.
+IMPROVEMENTS v4 (Transformers 5.x compatibility):
+- Legacy cache format (tuple-of-tuples), to_legacy_cache(), and
+  from_legacy_cache() are ALL removed in Transformers 5.0.
+  This version uses only the stable DynamicCache public API:
+    • cache.crop(N)                       ← truncate to N tokens
+    • for keys, values in cache: ...      ← iterate layers for serialisation
+    • cache.update(k, v, layer_idx)       ← rebuild from saved tensors
+- key_cache / value_cache attributes are NOT accessed directly.
+- No synchronize() or gc.collect() on the hot-path (per-query truncate).
 """
 
 import torch
 import gc
 import os
-import json
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
 
 
@@ -25,7 +25,7 @@ class CacheState:
     """Represents the state of KV cache"""
     input_ids: torch.Tensor
     token_count: int
-    knowledge_token_count: int          # N tokens we preserve across queries
+    knowledge_token_count: int
     past_key_values: Optional[Any] = None
     timestamp: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -64,12 +64,7 @@ class CacheManager:
     # ──────────────────────────────────────────────────────────────────────────
 
     def precompute_cache(self, knowledge_text: str) -> CacheState:
-        """
-        Pre-compute KV cache from solution knowledge base.
-
-        Args:
-            knowledge_text: Formatted solution knowledge (PROBLEM:|SOLUTION: format)
-        """
+        """Pre-compute KV cache from solution knowledge base."""
         print("\n" + "=" * 60)
         print("🎯 PRECOMPUTING KV CACHE")
         print("=" * 60)
@@ -100,8 +95,13 @@ class CacheManager:
                     outputs = self.model(input_ids, use_cache=True, return_dict=True)
 
             past_key_values = outputs.past_key_values
-            if hasattr(past_key_values, "to_legacy_cache"):
-                past_key_values = past_key_values.to_legacy_cache()
+            # Ensure we have a DynamicCache object (model should return one in v5)
+            from transformers import DynamicCache
+            if not isinstance(past_key_values, DynamicCache):
+                raise RuntimeError(
+                    f"Expected DynamicCache from model forward pass, got {type(past_key_values)}. "
+                    "Transformers 5.x always returns DynamicCache — check your transformers version."
+                )
 
             cache_state = CacheState(
                 input_ids             = input_ids,
@@ -115,11 +115,11 @@ class CacheManager:
             del outputs
             self._cleanup_memory()
 
-            free_after   = torch.cuda.mem_get_info()[0] // 1024 ** 2
-            memory_used  = free_before - free_after
+            free_after  = torch.cuda.mem_get_info()[0] // 1024 ** 2
+            memory_used = free_before - free_after
             print(f"✅ KV Cache pre-computed  |  {token_count} tokens  |  ~{memory_used} MB used")
 
-            self.cache_state   = cache_state
+            self.cache_state    = cache_state
             self.is_initialized = True
             return cache_state
 
@@ -136,16 +136,8 @@ class CacheManager:
         """
         Truncate KV cache back to knowledge-base length (N tokens).
 
-        Called after every query to strip the query + response tokens so the
-        next query starts from a clean knowledge context.
-
-        PERFORMANCE NOTE:
-        torch.cuda.synchronize() and gc.collect() have been intentionally
-        removed from this method.  They were called here in an earlier version
-        and caused 10-30 ms of dead time between every streamed response
-        (audible stutter in TTS pipelines).  GPU memory is NOT actually freed
-        by tensor slicing — those calls gave zero benefit at significant cost.
-        Heavy cleanup is deferred to reset / shutdown phases.
+        Uses DynamicCache.crop(N) — the official v5 API for in-place truncation.
+        No synchronize() or gc.collect() here (10-30 ms TTS stutter otherwise).
         """
         if not self.is_initialized or self.cache_state is None:
             raise ValueError("Cache not initialized.")
@@ -156,19 +148,9 @@ class CacheManager:
         if self.cache_state.input_ids.shape[-1] > N:
             self.cache_state.input_ids = self.cache_state.input_ids[:, :N]
 
-        # Truncate past_key_values
+        # Truncate KV cache using the built-in crop() method
         if self.cache_state.past_key_values is not None:
-            new_pkv = []
-            for layer_pair in self.cache_state.past_key_values:
-                truncated = []
-                for item in layer_pair:
-                    if isinstance(item, torch.Tensor) and item.dim() >= 3:
-                        # Standard layout: [batch, heads, seq_len, head_dim]
-                        truncated.append(item[:, :, :N, :])
-                    else:
-                        truncated.append(item)
-                new_pkv.append(tuple(truncated))
-            self.cache_state.past_key_values = tuple(new_pkv)
+            self.cache_state.past_key_values.crop(N)
 
         self.cache_state.token_count = N
 
@@ -194,31 +176,43 @@ class CacheManager:
     # ──────────────────────────────────────────────────────────────────────────
 
     def save_cache(self, path: Optional[str] = None):
+        """
+        Serialise the DynamicCache to disk.
+
+        Uses __iter__ on DynamicCache which yields (keys, values) per layer —
+        the only stable way to extract tensors in Transformers 5.x without
+        accessing private attributes.
+        """
         if self.cache_state is None:
             raise ValueError("No cache to save")
 
         path = path or self.config.cache_file_path
 
-        pkv_cpu = None
+        layers_cpu = None
         if self.cache_state.past_key_values is not None:
-            pkv_cpu = tuple(
-                tuple(t.cpu() if isinstance(t, torch.Tensor) else t for t in layer)
-                for layer in self.cache_state.past_key_values
-            )
+            # __iter__ yields (key_tensor, value_tensor) for each layer
+            layers_cpu = [
+                (k.cpu(), v.cpu())
+                for k, v in self.cache_state.past_key_values
+            ]
 
         torch.save(
             {
-                "input_ids":        self.cache_state.input_ids.cpu(),
-                "past_key_values":  pkv_cpu,
-                "metadata":         self.cache_state.to_dict(),
+                "input_ids":    self.cache_state.input_ids.cpu(),
+                "cache_layers": layers_cpu,          # list of (k, v) tuples
+                "metadata":     self.cache_state.to_dict(),
             },
             path,
         )
 
         if self.config.verbose:
-            print(f"💾 Cache saved → {path}")
+            print(f"💾 Cache saved → {path}  ({len(layers_cpu) if layers_cpu else 0} layers)")
 
     def load_cache(self, path: Optional[str] = None) -> bool:
+        """
+        Load a saved cache from disk and reconstruct a DynamicCache via
+        cache.update() — the only stable write API in Transformers 5.x.
+        """
         path = path or self.config.cache_file_path
 
         if not os.path.exists(path):
@@ -228,15 +222,32 @@ class CacheManager:
             cache_data = torch.load(path, map_location=self.device, weights_only=False)
             metadata   = cache_data["metadata"]
 
-            pkv_raw = cache_data.get("past_key_values")
-            if pkv_raw is None:
-                print("⚠️  Cache is stale (no past_key_values) — rebuilding...")
-                return False
+            # Support both new format ("cache_layers") and old formats
+            layers_raw = cache_data.get("cache_layers")
 
-            past_key_values = tuple(
-                tuple(t.to(self.device) if isinstance(t, torch.Tensor) else t for t in layer)
-                for layer in pkv_raw
-            )
+            if layers_raw is None:
+                # Try old format keys written by earlier cache_manager versions
+                pkv_raw = cache_data.get("past_key_values")
+                if pkv_raw is None:
+                    print("⚠️  Cache file has no layer data — rebuilding...")
+                    return False
+                # pkv_raw was a tuple-of-tuples; convert to list of (k,v)
+                if isinstance(pkv_raw, dict):
+                    # Format written by the v3 fix attempt — unreadable, rebuild
+                    print("⚠️  Unreadable old cache format — rebuilding...")
+                    return False
+                layers_raw = [(layer[0], layer[1]) for layer in pkv_raw]
+                print("⚠️  Old cache format detected — converting and saving new format...")
+
+            # Rebuild DynamicCache using update() — stable across v5 versions
+            from transformers import DynamicCache
+            past_key_values = DynamicCache()
+            for layer_idx, (k, v) in enumerate(layers_raw):
+                past_key_values.update(
+                    k.to(self.device),
+                    v.to(self.device),
+                    layer_idx,
+                )
 
             self.cache_state = CacheState(
                 input_ids             = cache_data["input_ids"].to(self.device),
@@ -248,8 +259,8 @@ class CacheManager:
             )
             self.is_initialized = True
 
-            if self.config.verbose:
-                print(f"✅ Cache loaded ← {path}")
+            layer_count = len(layers_raw)
+            print(f"✅ Cache loaded ← {path}  ({layer_count} layers)")
             return True
 
         except Exception as e:
@@ -264,10 +275,10 @@ class CacheManager:
         if self.cache_state is None:
             return {"initialized": False}
         return {
-            "initialized":     self.is_initialized,
-            "token_count":     self.cache_state.token_count,
+            "initialized":      self.is_initialized,
+            "token_count":      self.cache_state.token_count,
             "knowledge_tokens": self.cache_state.knowledge_token_count,
-            "metadata":        self.cache_state.metadata,
+            "metadata":         self.cache_state.metadata,
         }
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -275,17 +286,6 @@ class CacheManager:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _build_cache_prompt(self, knowledge_text: str) -> str:
-        """
-        Build the prompt that gets baked into the KV cache.
-
-        Only the system header + knowledge base go here.
-        The conversation-level system prompt is injected fresh at query time
-        by CAGSystemFreshSession._build_prompt() so it never needs a cache rebuild.
-
-        The marker "=== KNOWLEDGE BASE ===" is used by _build_prompt() to
-        extract just the knowledge body when decoding the cached input_ids.
-        Keep this marker consistent between both methods.
-        """
         prompt = (
             "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
             "You are the AI receptionist for Ask Novation, a business solutions company.\n"
@@ -299,11 +299,11 @@ class CacheManager:
         return prompt
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Startup / shutdown cleanup (synchronize IS acceptable here)
+    # Startup / shutdown cleanup
     # ──────────────────────────────────────────────────────────────────────────
 
     def _cleanup_memory(self):
-        """Heavy cleanup — only call at startup or shutdown, not per-query."""
+        """Heavy cleanup — only at startup or shutdown, never per-query."""
         gc.collect()
         torch.cuda.empty_cache()
         if torch.cuda.is_available():

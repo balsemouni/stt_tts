@@ -4,7 +4,7 @@
   "excluded_solutions": 0,
   "coverage_percent": 100.0,
   "token_count": 905,
-  "max_tokens": 5000,
+  "max_tokens": 4096,
   "token_efficiency": 90.5,
   "character_count": 4401,
   "unique_industries": 20,

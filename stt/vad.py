@@ -10,7 +10,6 @@ from queue import Queue, Empty
 from concurrent.futures import ThreadPoolExecutor
 
 from agc import SimpleAGC
-from deepfilter import DeepFilterNoiseReducer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,12 +66,10 @@ class VoiceActivityDetector:
                                     # before AGC amplifies further to target_rms=0.05
         silence_limit_ms=800,
         sentence_end_silence_ms=200,
-        enable_noise_reduction=False,
         min_chunk_samples=512,
     ):
         self.sample_rate            = sample_rate
         self.device                 = device
-        self.enable_noise_reduction = enable_noise_reduction
         self.min_chunk_samples      = min_chunk_samples
 
         if torch.cuda.is_available() and device == "cpu":
@@ -104,14 +101,6 @@ class VoiceActivityDetector:
                                  #   AGC gain = 0.08/0.030 = 2.7×  →  final ≈ 0.08
                                  #   well within Silero's reliable range (>0.05)
         )
-
-        self.denoiser = None
-        if self.enable_noise_reduction:
-            try:
-                self.denoiser = DeepFilterNoiseReducer(sample_rate=sample_rate, device=device)
-                print("⚠️ DeepFilter enabled")
-            except Exception as e:
-                print(f"⚠️ DeepFilter disabled: {e}")
 
         self.idle_threshold           = idle_threshold
         self.barge_in_threshold       = barge_in_threshold
@@ -205,9 +194,6 @@ class VoiceActivityDetector:
             boosted = audio_chunk * self.pre_gain if self.pre_gain != 1.0 else audio_chunk
             audio      = self.agc.process(boosted)
             rms_future = self.thread_pool.submit(self.rms, audio)
-
-            if self.enable_noise_reduction and self.denoiser is not None:
-                audio = self.denoiser.process(audio)
 
             # Submit every chunk to the VAD worker — never drop.
             # The worker accumulates chunks until it has 512 samples, then

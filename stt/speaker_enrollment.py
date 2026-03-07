@@ -1,72 +1,50 @@
 """
-speaker_enrollment.py  (v5 — Robust Profile)
-─────────────────────────────────────────────
-Root causes of the v4 rejection loop
-─────────────────────────────────────
-1. TOO LITTLE ENROLLMENT AUDIO (0.3s → 13 MFCC values)
-   Mean-averaging 13 MFCCs over 300ms captures one phoneme cluster —
-   not the speaker's voice.  The profile ends up representing a /h/ or
-   a /a/ vowel rather than the person.  Every subsequent chunk at a
-   different phoneme then fails.
-   Fix: raise enroll_min_seconds to 2.0s and enroll_max_seconds to 6.0s.
+speaker_enrollment.py  (v6 — First-Chunk Instant Enrollment)
+─────────────────────────────────────────────────────────────
+Design goal
+───────────
+Lock the speaker profile on the VERY FIRST voice chunk that passes the
+VAD + RMS gate, even if it is a single short word.  ASR is unblocked
+immediately on that same chunk — zero enrollment latency.
 
-2. MEAN-ONLY MFCC FEATURES  (shape (13,) → shape (39,))
-   The mean MFCC vector discards all temporal dynamics.  Two speakers can
-   share very similar mean MFCCs if their formant centers are close.
-   Fix: append delta (velocity) and delta-delta (acceleration) coefficients
-   to the mean, tripling the feature vector to shape (39,).  This captures
-   HOW the speaker moves between phonemes — unique to each person.
+How it works
+────────────
+• No accumulation window.  Each incoming voice chunk is embedded directly
+  using _extract_mfcc_full() with aggressive zero-padding so even a 20ms
+  chunk produces a valid (39,) feature vector.
 
-3. THRESHOLDS CALIBRATED FOR (39,) FEATURES
-   Cosine similarity distributions shift when feature dimensionality triples.
-   The old thresholds (adaptive=0.65, anchor=0.55) were empirically set for
-   13-dim vectors.  For 39-dim vectors with proper enrollment audio, same-
-   speaker similarity rises to 0.82–0.95; different-speaker falls to 0.40–0.65.
-   Fix: raise adaptive_threshold to 0.75, anchor_slack to 0.20 (anchor=0.55),
-   and increase adapt_min_chunks to 10.
+• On the first qualifying chunk (_locked = False, is_voice = True,
+  rms > RMS_FLOOR) the embedding is computed and _lock_profile() is
+  called immediately.  The chunk is also forwarded to ASR (send_to_asr=True).
 
-4. NO CHUNK QUALITY GATE DURING ENROLLMENT
-   Short transients (plosives, breath, mic noise) had RMS above the 0.003
-   floor and were buffered.  These fragments skew the mean MFCC badly.
-   Fix: require a minimum chunk duration (MIN_ENROLL_CHUNK_MS = 80ms) so
-   only chunks with enough frames contribute to the profile.  Also raise
-   RMS_FLOOR to 0.008 to skip low-energy non-speech frames.
+• Subsequent chunks use the normal two-layer similarity check
+  (anchor + adaptive) exactly as in v5.
 
-5. PROFILE BUILT FROM CONCATENATED CHUNKS INSTEAD OF PER-CHUNK EMBEDDINGS
-   Concatenating all enrollment audio and computing one global mean works
-   poorly when enrollment chunks span many different phonemes — the mean
-   regresses to a mid-point that matches no individual chunk well.
-   Fix: compute one embedding per enrolled chunk and average the EMBEDDINGS
-   (not the raw audio).  Each embedding is a 39-dim vector summarising that
-   chunk's phonetic content.  Averaging embeddings across phonetically diverse
-   chunks gives a centroid that represents the speaker, not a single phoneme.
+• The adaptive profile continues to drift slowly so the system adjusts
+  to the speaker's voice over the session.
+
+Trade-off vs v5
+───────────────
+v5 collected 2–6 s to build a robust centroid across many phonemes.
+v6 locks on one chunk — the anchor may represent only one phoneme, so
+similarity_threshold and anchor_slack are loosened slightly:
+  adaptive_threshold = 0.65  (was 0.75)
+  anchor_slack       = 0.25  (was 0.20)  →  anchor = 0.40
+This avoids false rejections when the first word (e.g. "yes") differs
+spectrally from follow-up speech.
 
 Feature vector layout  (shape 39)
 ──────────────────────────────────
-  [  0:13 ]  mean MFCCs    (c0–c12, log filterbank energy)
-  [ 13:26 ]  mean deltas   (velocity  — rate of change of MFCCs)
-  [ 26:39 ]  mean delta²   (acceleration — rate of change of deltas)
-
-Threshold guidance (empirical, 16kHz mic, quiet room)
-──────────────────────────────────────────────────────
-  Same speaker, continuous speech:   0.82 – 0.95
-  Same speaker, whisper vs normal:   0.72 – 0.85
-  Same speaker, next day:            0.78 – 0.92
-  Different speaker (similar voice): 0.50 – 0.68
-  Different speaker (clearly diff):  0.20 – 0.50
-
-  adaptive_threshold = 0.75   →  TP≈97%  FP≈3%   (production default)
-  adaptive_threshold = 0.80   →  TP≈93%  FP≈0.5% (high-security)
-  adaptive_threshold = 0.70   →  TP≈99%  FP≈8%   (relaxed/noisy env)
+  [  0:13 ]  mean MFCCs    (c0–c12)
+  [ 13:26 ]  mean deltas
+  [ 26:39 ]  mean delta²
 
 Parameters you can tune in __init__
 ────────────────────────────────────
-  similarity_threshold  float  0.75   Main gate (adaptive profile)
-  anchor_slack          float  0.20   Anchor = threshold − slack  → 0.55
-  adapt_rate            float  0.03   Blend rate per accepted chunk
-  adapt_min_chunks      int    10     Start adapting after N accepted chunks
-  enroll_min_seconds    float  2.0    Minimum voice audio before locking
-  enroll_max_seconds    float  6.0    Hard cap; force-lock at this point
+  similarity_threshold  float  0.65   Main gate (loosened for 1-chunk enroll)
+  anchor_slack          float  0.25   anchor = threshold − slack  → 0.40
+  adapt_rate            float  0.05   Slightly faster drift than v5
+  adapt_min_chunks      int    3      Start adapting sooner
 """
 
 from __future__ import annotations
@@ -89,14 +67,11 @@ except ImportError:
 #  Configuration defaults
 # ─────────────────────────────────────────────────────────────────────────────
 
-ENROLL_MIN_SECONDS   = 2.0    # Need diverse phoneme coverage
-ENROLL_MAX_SECONDS   = 6.0    # Hard cap; force-lock at this point
-SIMILARITY_THRESHOLD = 0.75   # Calibrated for 39-dim features
-ANCHOR_SLACK         = 0.20   # anchor threshold = similarity - slack = 0.55
-ADAPT_RATE           = 0.03   # Slow drift = more stable
-ADAPT_MIN_CHUNKS     = 10     # Wait for solid acceptance history
-RMS_FLOOR            = 0.003  # Lowered: 0.008 was too aggressive for quiet mics
-MIN_ENROLL_CHUNK_MS  = 20     # Accept streaming chunks (was 80ms — blocked everything)
+SIMILARITY_THRESHOLD = 0.65   # Loosened: anchor covers only 1 chunk phoneme
+ANCHOR_SLACK         = 0.25   # anchor threshold = 0.65 − 0.25 = 0.40
+ADAPT_RATE           = 0.05   # Slightly faster drift to cover more phonemes early
+ADAPT_MIN_CHUNKS     = 3      # Start adapting after only 3 accepted chunks
+RMS_FLOOR            = 0.008  # Skip truly silent / noise-only chunks
 
 N_MFCC               = 13
 WINLEN               = 0.025
@@ -111,13 +86,12 @@ def _extract_mfcc_full(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     """
     Returns shape (39,) = mean(MFCC) + mean(delta) + mean(delta²).
 
-    The delta and delta-delta features capture HOW the speaker transitions
-    between phonemes — this is highly speaker-specific even when raw MFCC
-    means overlap.
-
-    Falls back to (13,) mean-only if audio is too short to compute deltas.
+    v6: Pads aggressively to at least 200ms so even a single 20ms streaming
+    chunk produces a valid 39-dim feature vector.  The zero-padding only
+    mildly pulls mean values toward zero — acceptable for instant enrollment.
     """
-    min_len = int(sample_rate * WINLEN * 4)   # need at least 4 frames for delta
+    # Pad to at least 200ms — guarantees enough frames for delta/delta2
+    min_len = max(int(sample_rate * 0.20), int(sample_rate * WINLEN * 4))
     if len(audio) < min_len:
         audio = np.pad(audio, (0, min_len - len(audio)))
 
@@ -240,27 +214,20 @@ class SpeakerEnrollmentService:
         anchor_slack: float         = ANCHOR_SLACK,
         adapt_rate: float           = ADAPT_RATE,
         adapt_min_chunks: int       = ADAPT_MIN_CHUNKS,
-        enroll_min_seconds: float   = ENROLL_MIN_SECONDS,
-        enroll_max_seconds: float   = ENROLL_MAX_SECONDS,
     ):
         self.sample_rate          = sample_rate
         self.similarity_threshold = similarity_threshold
         self.anchor_threshold     = max(0.0, similarity_threshold - anchor_slack)
         self.adapt_rate           = adapt_rate
         self.adapt_min_chunks     = adapt_min_chunks
-        self.enroll_min_seconds   = enroll_min_seconds
-        self.enroll_max_seconds   = enroll_max_seconds
 
         # ── Internal state ─────────────────────────────────────────────────
-        # v5: store per-chunk EMBEDDINGS, not raw audio
-        self._enroll_embeddings: List[np.ndarray] = []
-        self._enrolled_samples: int               = 0
         self._locked: bool                        = False
         self._use_mfcc: bool                      = PSF_AVAILABLE
 
-        # Layer 1: immutable anchor
+        # Layer 1: immutable anchor (locked on first voice chunk)
         self._anchor_profile: Optional[np.ndarray]   = None
-        # Layer 2: adaptive profile (starts = anchor, drifts slowly)
+        # Layer 2: adaptive profile (starts = anchor, drifts with each accepted chunk)
         self._adaptive_profile: Optional[np.ndarray] = None
 
         # ── Stats ──────────────────────────────────────────────────────────
@@ -271,21 +238,10 @@ class SpeakerEnrollmentService:
         self.chunks_rejected:  int    = 0
         self._adapt_count:     int    = 0
 
-        self._min_enroll_samples = int(sample_rate * MIN_ENROLL_CHUNK_MS / 1000)
-
-        # Accumulate small streaming chunks into 200ms windows before
-        # computing an MFCC embedding. Running MFCC on 20ms chunks gives
-        # only ~2 frames — not enough for delta/delta2 features.
-        self._enroll_acc_buffer: List[np.ndarray] = []
-        self._enroll_acc_samples: int = 0
-        # Target: 200ms per embedding (3200 samples at 16kHz)
-        self._enroll_window_samples: int = int(sample_rate * 0.20)
-
         logger.info(
-            f"[Enrollment] v5 initialized — "
+            f"[Enrollment] v6 initialized — INSTANT (first-chunk) mode  "
             f"adaptive_threshold={similarity_threshold:.2f}  "
             f"anchor_threshold={self.anchor_threshold:.2f}  "
-            f"enroll_min={enroll_min_seconds:.1f}s  "
             f"adapt_rate={adapt_rate}  "
             f"extractor={'mfcc+delta+delta2' if self._use_mfcc else 'spectral'}"
         )
@@ -298,12 +254,8 @@ class SpeakerEnrollmentService:
 
     @property
     def enrollment_progress(self) -> float:
-        if self.is_enrolled:
-            return 1.0
-        needed = int(self.enroll_min_seconds * self.sample_rate)
-        if needed == 0:
-            return 1.0
-        return min(self._enrolled_samples / needed, 0.99)
+        # v6: either not enrolled (0.0) or enrolled (1.0) — no partial progress
+        return 1.0 if self.is_enrolled else 0.0
 
     # ── Main entry point ──────────────────────────────────────────────────────
 
@@ -313,54 +265,40 @@ class SpeakerEnrollmentService:
 
         audio_chunk = audio_chunk.astype(np.float32)
 
-        # ── Phase 1: ENROLLING ────────────────────────────────────────────────
+        # ── Phase 1: ENROLLING — instant lock on first valid voice chunk ─────
         if not self.is_enrolled:
-            if not self._locked and is_voice:
+            if is_voice:
                 rms = float(np.sqrt(np.mean(audio_chunk ** 2)))
 
-                # RMS_FLOOR is checked on the VAD-processed (AGC-amplified) audio.
-                # After 5× pre_gain + AGC the signal is typically 0.03–0.15 for
-                # real speech. Silence amplified by AGC still sits at 0.005–0.015.
-                # Use a higher floor (0.02) to reject amplified silence.
-                if rms > 0.02:
-                    # Accumulate streaming chunks into 200ms windows
-                    # Computing MFCC on <40ms gives too few frames for deltas.
-                    self._enroll_acc_buffer.append(audio_chunk)
-                    self._enroll_acc_samples += len(audio_chunk)
+                if rms >= RMS_FLOOR:
+                    # Lock immediately on this single chunk.
+                    # _extract_mfcc_full zero-pads to 200ms internally so even
+                    # a 20ms chunk produces a valid 39-dim embedding.
+                    embedding = _extract(audio_chunk, self.sample_rate, self._use_mfcc)
+                    self._lock_profile_instant(embedding, len(audio_chunk))
 
-                    if self._enroll_acc_samples >= self._enroll_window_samples:
-                        # Enough audio accumulated — build one embedding
-                        window = np.concatenate(self._enroll_acc_buffer)
-                        self._enroll_acc_buffer = []
-                        self._enroll_acc_samples = 0
+                    logger.info(
+                        f"[Enrollment] ⚡ INSTANT LOCK — first voice chunk  "
+                        f"rms={rms:.4f}  samples={len(audio_chunk)}  "
+                        f"feat_dim={embedding.shape[0]}"
+                    )
 
-                        embedding = _extract(window, self.sample_rate, self._use_mfcc)
-                        self._enroll_embeddings.append(embedding)
-                        self._enrolled_samples += len(window)
-                        collected = self._enrolled_samples / self.sample_rate
+                    # Forward this chunk to ASR immediately — no blocking.
+                    return EnrollmentDecision(
+                        send_to_asr = True,
+                        reason      = "enrolled_instant",
+                        similarity  = 1.0,
+                        enrolled    = True,
+                        progress    = 1.0,
+                    )
 
-                        logger.debug(
-                            f"[Enrollment] Buffered embedding #{len(self._enroll_embeddings)} "
-                            f"({collected:.2f}s / {self.enroll_min_seconds:.1f}s  "
-                            f"rms={rms:.4f}  shape={embedding.shape})"
-                        )
-
-                        if collected >= self.enroll_max_seconds:
-                            logger.info("[Enrollment] Max seconds reached — force locking...")
-                            self._lock_profile(force=True)
-                        elif collected >= self.enroll_min_seconds and len(self._enroll_embeddings) >= 3:
-                            logger.info(
-                                f"[Enrollment] Reached {collected:.2f}s "
-                                f"({len(self._enroll_embeddings)} embeddings) — locking..."
-                            )
-                            self._lock_profile()
-
+            # Not yet a voice chunk (or rms too low) — waiting for first word
             return EnrollmentDecision(
-                send_to_asr = True,
-                reason      = "enrolling",
+                send_to_asr = False,
+                reason      = "waiting_for_voice",
                 similarity  = None,
-                enrolled    = self.is_enrolled,
-                progress    = self.enrollment_progress,
+                enrolled    = False,
+                progress    = 0.0,
             )
 
         # ── Phase 2: ENROLLED — two-layer similarity check ────────────────────
@@ -433,47 +371,33 @@ class SpeakerEnrollmentService:
 
     # ── Private ───────────────────────────────────────────────────────────────
 
-    def _lock_profile(self, force: bool = False):
+    def _lock_profile_instant(self, embedding: np.ndarray, n_samples: int):
         """
-        Build anchor + adaptive profiles by averaging per-chunk embeddings.
-
-        v5 change: average EMBEDDINGS (not raw audio) so the profile centroid
-        reflects the speaker's phonetic identity across diverse speech samples,
-        not the mean of one continuous audio segment which regresses to a single
-        phoneme cluster.
+        v6: Lock profile immediately from a single embedding.
+        The anchor is set to this normalised embedding.
+        The adaptive profile starts as a copy and drifts over time.
         """
         if self._locked:
             return
-        if not self._enroll_embeddings:
-            logger.warning("[Enrollment] Cannot lock — no embeddings collected")
-            return
 
-        self._locked = True   # prevents re-entry
+        self._locked = True
 
-        # Stack embeddings: (n_chunks, feat_dim) → mean → (feat_dim,)
-        stack   = np.stack(self._enroll_embeddings, axis=0)   # (n, 39)
-        profile = stack.mean(axis=0).astype(np.float32)
-
-        # Normalise so cosine similarity is well-defined
+        profile = embedding.astype(np.float32).copy()
         norm = np.linalg.norm(profile)
         if norm > 1e-9:
             profile /= norm
 
         self._anchor_profile   = profile.copy()
         self._adaptive_profile = profile.copy()
-
-        self.enrolled_seconds    = self._enrolled_samples / self.sample_rate
-        self._enroll_embeddings  = []   # free memory
+        self.enrolled_seconds  = n_samples / self.sample_rate
 
         logger.info(
-            f"[Enrollment] ✅ Profile LOCKED — "
-            f"{self.enrolled_seconds:.1f}s  "
-            f"n_embeddings={len(stack)}  "
+            f"[Enrollment] ✅ Profile LOCKED (instant) — "
+            f"{self.enrolled_seconds*1000:.0f}ms  "
             f"feat_dim={profile.shape[0]}  "
             f"extractor={'mfcc+delta+delta2' if self._use_mfcc else 'spectral'}  "
             f"anchor_threshold={self.anchor_threshold:.2f}  "
-            f"adaptive_threshold={self.similarity_threshold:.2f}  "
-            f"({'forced' if force else 'normal'})"
+            f"adaptive_threshold={self.similarity_threshold:.2f}"
         )
 
     def _adapt_profile(self, embedding: np.ndarray):
@@ -495,20 +419,16 @@ class SpeakerEnrollmentService:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def reset(self):
-        self._enroll_embeddings = []
-        self._enrolled_samples  = 0
-        self._anchor_profile    = None
-        self._adaptive_profile  = None
-        self._locked            = False
-        self.enrolled_seconds   = 0.0
-        self.last_similarity    = 1.0
-        self.last_anchor_sim    = 1.0
-        self.chunks_accepted    = 0
-        self.chunks_rejected    = 0
-        self._adapt_count       = 0
-        self._enroll_acc_buffer  = []
-        self._enroll_acc_samples = 0
-        logger.info("[Enrollment] Reset — starting fresh enrollment")
+        self._anchor_profile   = None
+        self._adaptive_profile = None
+        self._locked           = False
+        self.enrolled_seconds  = 0.0
+        self.last_similarity   = 1.0
+        self.last_anchor_sim   = 1.0
+        self.chunks_accepted   = 0
+        self.chunks_rejected   = 0
+        self._adapt_count      = 0
+        logger.info("[Enrollment] Reset — ready for next first-chunk enrollment")
 
     def get_stats(self) -> dict:
         return {

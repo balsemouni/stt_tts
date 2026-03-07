@@ -112,14 +112,12 @@ def _make_pipeline() -> STTPipeline:
         idle_threshold         = 0.10,
         barge_in_threshold     = 0.30,
         vad_pre_gain           = 15.0,
-        enable_noise_reduction = False,
         enable_ai_filtering    = False,
         ai_detector_model_path = None,
         ai_detection_threshold = 0.7,
         enable_aec             = True,
-        enable_enrollment      = False,  # Re-enable once basic VAD→ASR confirmed working
-        enroll_min_seconds     = 2.0,
-        similarity_threshold   = 0.72,
+        enable_enrollment      = True,   # v6: instant first-chunk enrollment
+        similarity_threshold   = 0.65,   # v6: loosened for single-chunk anchor
         overlap_seconds        = 0.8,
         word_gap_ms            = 80.0,
         max_context_words      = 40,
