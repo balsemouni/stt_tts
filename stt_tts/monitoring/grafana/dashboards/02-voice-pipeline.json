@@ -1,0 +1,417 @@
+{
+    "uid":  "asknova-voice",
+    "title":  "AskNova â€” 02 Voice Pipeline",
+    "description":  "STT, VAD, AEC, VoiceGate, Barge-in deep dive",
+    "tags":  [
+                 "asknova",
+                 "voice",
+                 "stt"
+             ],
+    "timezone":  "browser",
+    "refresh":  "5s",
+    "time":  {
+                 "from":  "now-30m",
+                 "to":  "now"
+             },
+    "templating":  {
+                       "list":  [
+                                    {
+                                        "name":  "interval",
+                                        "type":  "interval",
+                                        "query":  "5s,10s,30s,1m",
+                                        "current":  {
+                                                        "text":  "10s",
+                                                        "value":  "10s"
+                                                    }
+                                    }
+                                ]
+                   },
+    "panels":  [
+                   {
+                       "id":  100,
+                       "type":  "row",
+                       "title":  "ðŸŽ¤ STT Performance",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  0
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  1,
+                       "type":  "timeseries",
+                       "title":  "STT Transcription Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(stt_transcribe_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(stt_transcribe_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p95",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.99, rate(stt_transcribe_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p99",
+                                           "refId":  "C"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  10
+                                                                       }
+                                                        }
+                                       },
+                       "options":  {
+                                       "legend":  {
+                                                      "displayMode":  "table",
+                                                      "calcs":  [
+                                                                    "mean",
+                                                                    "max",
+                                                                    "lastNotNull"
+                                                                ]
+                                                  }
+                                   }
+                   },
+                   {
+                       "id":  2,
+                       "type":  "timeseries",
+                       "title":  "Words \u0026 Segments Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(stt_words_total[$interval])",
+                                           "legendFormat":  "Words/s",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "rate(stt_segments_total[$interval])",
+                                           "legendFormat":  "Segments/s",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  20
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  101,
+                       "type":  "row",
+                       "title":  "ðŸ”‡ Echo Cancellation",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  9
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  10,
+                       "type":  "timeseries",
+                       "title":  "AEC Gate â€” Suppressed Frames",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  8,
+                                       "x":  0,
+                                       "y":  10
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(stt_aec_suppressed_total[$interval])",
+                                           "legendFormat":  "AEC suppressed/s",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "color":  {
+                                                                          "fixedColor":  "red",
+                                                                          "mode":  "fixed"
+                                                                      },
+                                                            "custom":  {
+                                                                           "drawStyle":  "bars",
+                                                                           "lineWidth":  1,
+                                                                           "fillOpacity":  50
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  11,
+                       "type":  "timeseries",
+                       "title":  "VoiceGate â€” Fingerprint Suppression",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  8,
+                                       "x":  8,
+                                       "y":  10
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(stt_voicegate_suppressed_total[$interval])",
+                                           "legendFormat":  "VoiceGate suppressed/s",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "color":  {
+                                                                          "fixedColor":  "orange",
+                                                                          "mode":  "fixed"
+                                                                      },
+                                                            "custom":  {
+                                                                           "drawStyle":  "bars",
+                                                                           "lineWidth":  1,
+                                                                           "fillOpacity":  50
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  12,
+                       "type":  "timeseries",
+                       "title":  "VAD Voice Frames",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  8,
+                                       "x":  16,
+                                       "y":  10
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(stt_vad_voice_frames_total[$interval])",
+                                           "legendFormat":  "Voice frames/s",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "color":  {
+                                                                          "fixedColor":  "green",
+                                                                          "mode":  "fixed"
+                                                                      },
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  30
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  102,
+                       "type":  "row",
+                       "title":  "âš¡ Barge-In",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  17
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  20,
+                       "type":  "timeseries",
+                       "title":  "Barge-In Events",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  18
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(stt_barge_ins_total[$interval])",
+                                           "legendFormat":  "STT barge-ins/s",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "rate(gateway_barge_ins_total[$interval])",
+                                           "legendFormat":  "Gateway barge-ins/s",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  25
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  21,
+                       "type":  "stat",
+                       "title":  "Total Barge-Ins (STT)",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  3,
+                                       "w":  6,
+                                       "x":  12,
+                                       "y":  18
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "stt_barge_ins_total",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "fixedColor":  "orange",
+                                                                          "mode":  "fixed"
+                                                                      }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  22,
+                       "type":  "stat",
+                       "title":  "Total Barge-Ins (GW)",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  3,
+                                       "w":  6,
+                                       "x":  18,
+                                       "y":  18
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_barge_ins_total",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "fixedColor":  "red",
+                                                                          "mode":  "fixed"
+                                                                      }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  23,
+                       "type":  "stat",
+                       "title":  "STT Active Sessions",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  6,
+                                       "x":  12,
+                                       "y":  21
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "stt_active_sessions",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  5
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  24,
+                       "type":  "timeseries",
+                       "title":  "Suppression Ratio (AEC vs VoiceGate)",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  6,
+                                       "x":  18,
+                                       "y":  21
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(stt_aec_suppressed_total[$interval]) / (rate(stt_vad_voice_frames_total[$interval]) + rate(stt_aec_suppressed_total[$interval]) + 0.001) * 100",
+                                           "legendFormat":  "AEC %",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "rate(stt_voicegate_suppressed_total[$interval]) / (rate(stt_vad_voice_frames_total[$interval]) + rate(stt_voicegate_suppressed_total[$interval]) + 0.001) * 100",
+                                           "legendFormat":  "VoiceGate %",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       }
+                   }
+               ],
+    "schemaVersion":  39,
+    "version":  1
+}

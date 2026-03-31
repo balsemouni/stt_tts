@@ -1,0 +1,66 @@
+groups:
+  - name: asknova_service_health
+    interval: 10s
+    rules:
+      - alert: ServiceDown
+        expr: '{__name__=~".+_up"} == 0'
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} service is DOWN"
+          description: "{{ $labels.job }} has been down for > 30s"
+
+      - alert: HighE2ELatency
+        expr: histogram_quantile(0.95, rate(gateway_e2e_latency_seconds_bucket[1m])) > 3
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "E2E latency p95 > 3s"
+          description: "Voice-to-response latency is {{ $value }}s (p95)"
+
+      - alert: HighCAGLatency
+        expr: histogram_quantile(0.95, rate(cag_inference_latency_seconds_bucket[1m])) > 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CAG inference latency p95 > 2s"
+          description: "LLM inference is slow: {{ $value }}s (p95)"
+
+      - alert: GPUTemperatureHigh
+        expr: cag_gpu_temperature_celsius > 85
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU temperature > 85°C"
+          description: "GPU at {{ $value }}°C — risk of thermal throttling"
+
+      - alert: GPUMemoryHigh
+        expr: (cag_gpu_memory_used_mb / cag_gpu_memory_total_mb) * 100 > 95
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU memory usage > 95%"
+          description: "GPU memory at {{ $value }}% — may cause OOM"
+
+      - alert: HighErrorRate
+        expr: sum(rate(gateway_http_requests_total{status=~"5.."}[5m])) / sum(rate(gateway_http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway error rate > 5%"
+          description: "5xx error rate is {{ $value | humanizePercentage }}"
+
+      - alert: HighBargeInRate
+        expr: rate(gateway_barge_ins_total[5m]) > 0.5
+        for: 3m
+        labels:
+          severity: info
+        annotations:
+          summary: "High barge-in rate"
+          description: "{{ $value }} barge-ins/s — may indicate echo issues"

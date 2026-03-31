@@ -1,0 +1,20 @@
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev gcc libsndfile1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf python3 /usr/bin/python
+
+COPY stt_tts/monitoring /app/monitoring
+COPY stt_tts/stt /app/stt
+
+RUN pip install --no-cache-dir \
+    fastapi>=0.110.0 "uvicorn[standard]>=0.29.0" \
+    websockets>=12.0 numpy>=1.26.4 scipy>=1.13.0 \
+    soundfile>=0.12.1 torch>=2.2.0 faster-whisper>=1.0.0 \
+    httpx>=0.27.0 pydantic>=2.0.0 prometheus-client python-dotenv
+
+WORKDIR /app/stt
+EXPOSE 8001
+CMD ["python", "main.py"]

@@ -1,0 +1,10 @@
+FROM node:20-alpine
+WORKDIR /app
+
+COPY front_test/package.json front_test/package-lock.json* ./
+RUN npm install
+
+COPY front_test/ .
+
+EXPOSE 3000
+CMD ["npx", "tsx", "server.ts"]

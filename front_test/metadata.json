@@ -1,0 +1,5 @@
+{
+  "name": "EchoVoice AI",
+  "description": "A sophisticated voice-first AI assistant with session history and elegant grey-green design.",
+  "requestFramePermissions": ["microphone"]
+}

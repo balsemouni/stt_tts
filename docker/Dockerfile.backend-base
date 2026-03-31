@@ -1,0 +1,8 @@
+# ── Backend base image (shared by all Python services) ────────────────────
+FROM python:3.10-slim AS backend-base
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+COPY stt_tts/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || true

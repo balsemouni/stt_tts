@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.env
+
+# Node
+node_modules/
+front_test/node_modules/
+front_test/dist/
+
+# PyTorch / Models
+*.pt
+*.bin
+*.safetensors
+*.gguf
+
+# Data
+*.sqlite
+*.db
+memory/
+stt_tts/memory/
+stt_tts/cag/memory/
+
+# Docker volumes
+postgres-data/
+prometheus-data/
+grafana-data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+build.log
+
+# Cache
+stt_tts/cag/data/

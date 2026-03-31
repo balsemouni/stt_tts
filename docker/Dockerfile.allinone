@@ -1,0 +1,107 @@
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║  AskNova AI — All-in-One Docker Image                               ║
+# ║  Single image runs: PostgreSQL + Redis + Auth + Sessions + Messages  ║
+# ║                     + Gateway + STT + CAG + Frontend                 ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+#
+#  Build:   docker build -f docker/Dockerfile.allinone -t asknova-allinone .
+#  Run:     docker run --gpus all -p 3000:3000 -p 8090:8090 -p 8006:8006 -p 8005:8005 -p 8003:8003 -p 8001:8001 -p 8000:8000 asknova-allinone
+#
+#  If NO GPU: docker run -p 3000:3000 -p 8090:8090 -p 8006:8006 asknova-allinone
+#    (STT + CAG will fail to start but all other services work)
+
+# ── Stage 1: Build frontend ─────────────────────────────────────────────
+FROM node:20-slim AS frontend-builder
+WORKDIR /build
+COPY front_test/package.json front_test/package-lock.json* ./
+RUN npm install
+COPY front_test/ .
+
+# ── Stage 2: All-in-one runtime ─────────────────────────────────────────
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# ── System packages: Python 3.10, PostgreSQL 16, Redis, Node 20, curl ──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common gnupg2 curl ca-certificates wget lsb-release && \
+    # Python 3.10
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    # PostgreSQL 16
+    echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
+    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
+    # Node 20
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3.10-venv python3.10-dev python3-pip \
+    postgresql-16 postgresql-client-16 \
+    redis-server \
+    nodejs \
+    gcc g++ libpq-dev libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.10 the default python
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+# Upgrade pip
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# ── Install PyTorch first (from CUDA 12.1 index) ───────────────────────
+RUN pip install --no-cache-dir \
+    torch>=2.2.0 --index-url https://download.pytorch.org/whl/cu121
+
+# ── Install ALL other Python dependencies ───────────────────────────────
+RUN pip install --no-cache-dir \
+    "fastapi>=0.110.0" "uvicorn[standard]>=0.29.0" "websockets>=12.0" \
+    "numpy>=1.26.4" "httpx>=0.27.0" "pydantic>=2.0.0" \
+    prometheus-client python-dotenv aiohttp \
+    sqlalchemy asyncpg pydantic-settings \
+    "python-jose[cryptography]" passlib "bcrypt==4.0.1" email-validator \
+    psycopg2-binary redis \
+    "faster-whisper>=1.0.0" "scipy>=1.13.0" "soundfile>=0.12.1" \
+    python-multipart \
+    "transformers>=4.40.0" "accelerate>=0.30.0" "bitsandbytes>=0.43.0"
+
+# ── Configure PostgreSQL ────────────────────────────────────────────────
+RUN rm -rf /var/lib/postgresql/16/main && mkdir -p /var/lib/postgresql/16/main && chown postgres:postgres /var/lib/postgresql/16/main
+USER postgres
+RUN /usr/lib/postgresql/16/bin/initdb -D /var/lib/postgresql/16/main && \
+    echo "listen_addresses = 'localhost'" >> /var/lib/postgresql/16/main/postgresql.conf && \
+    echo "host all all 127.0.0.1/32 trust" >> /var/lib/postgresql/16/main/pg_hba.conf && \
+    echo "host all all ::1/128 trust" >> /var/lib/postgresql/16/main/pg_hba.conf && \
+    echo "local all all trust" >> /var/lib/postgresql/16/main/pg_hba.conf
+USER root
+
+# ── Copy application code ──────────────────────────────────────────────
+WORKDIR /app
+
+# Backend services
+COPY stt_tts/monitoring   /app/monitoring
+COPY stt_tts/user_auth    /app/user_auth
+COPY stt_tts/session_chat /app/session_chat
+COPY stt_tts/messages     /app/messages
+COPY stt_tts/gateway      /app/gateway
+COPY stt_tts/tts          /app/tts
+COPY stt_tts/stt          /app/stt
+COPY stt_tts/cag          /app/cag
+
+# Frontend (with node_modules from builder)
+COPY --from=frontend-builder /build /app/frontend
+
+# Startup script
+COPY docker/start-all.sh /app/start-all.sh
+RUN sed -i 's/\r$//' /app/start-all.sh && chmod +x /app/start-all.sh
+
+# ── Expose all service ports ────────────────────────────────────────────
+EXPOSE 3000 8000 8001 8003 8005 8006 8090 5432 6379
+
+# ── Environment defaults ────────────────────────────────────────────────
+ENV DATABASE_USER=postgres \
+    DATABASE_PASSWORD=asknova123 \
+    DATABASE_HOST=localhost \
+    DATABASE_PORT=5432
+
+# ── Start everything ────────────────────────────────────────────────────
+CMD ["/bin/bash", "/app/start-all.sh"]

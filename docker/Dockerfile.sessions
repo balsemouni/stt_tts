@@ -1,0 +1,18 @@
+FROM python:3.10-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY stt_tts/monitoring /app/monitoring
+COPY stt_tts/session_chat /app/session_chat
+
+RUN pip install --no-cache-dir \
+    fastapi>=0.110.0 uvicorn[standard]>=0.29.0 \
+    sqlalchemy psycopg2-binary httpx pydantic>=2.0.0 \
+    redis prometheus-client python-dotenv
+
+WORKDIR /app/session_chat
+EXPOSE 8005
+CMD ["python", "main.py"]

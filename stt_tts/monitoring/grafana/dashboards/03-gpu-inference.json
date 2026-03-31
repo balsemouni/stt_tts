@@ -1,0 +1,565 @@
+{
+    "uid":  "asknova-gpu",
+    "title":  "AskNova â€” 03 GPU \u0026 Inference",
+    "description":  "CAG LLM: GPU utilization, memory, temperature, inference latency, token throughput",
+    "tags":  [
+                 "asknova",
+                 "gpu",
+                 "cag",
+                 "llm"
+             ],
+    "timezone":  "browser",
+    "refresh":  "5s",
+    "time":  {
+                 "from":  "now-30m",
+                 "to":  "now"
+             },
+    "templating":  {
+                       "list":  [
+                                    {
+                                        "name":  "interval",
+                                        "type":  "interval",
+                                        "query":  "5s,10s,30s,1m",
+                                        "current":  {
+                                                        "text":  "10s",
+                                                        "value":  "10s"
+                                                    }
+                                    }
+                                ]
+                   },
+    "panels":  [
+                   {
+                       "id":  100,
+                       "type":  "row",
+                       "title":  "ðŸ–¥ï¸ GPU Status",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  0
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  1,
+                       "type":  "gauge",
+                       "title":  "GPU Utilization",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  6,
+                                       "x":  0,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_gpu_utilization_percent",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "min":  0,
+                                                            "max":  100,
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  60
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "orange",
+                                                                                                 "value":  80
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  95
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  2,
+                       "type":  "gauge",
+                       "title":  "GPU Memory",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  6,
+                                       "x":  6,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_gpu_memory_used_mb / cag_gpu_memory_total_mb * 100",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "min":  0,
+                                                            "max":  100,
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  70
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  90
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  3,
+                       "type":  "gauge",
+                       "title":  "Temperature",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  6,
+                                       "x":  12,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_gpu_temperature_celsius",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "celsius",
+                                                            "min":  0,
+                                                            "max":  100,
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  65
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "orange",
+                                                                                                 "value":  75
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  85
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  4,
+                       "type":  "stat",
+                       "title":  "CAG WS Connections",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  6,
+                                       "x":  18,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_ws_connections",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  5
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  10
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  101,
+                       "type":  "row",
+                       "title":  "ðŸ“Š GPU Trends",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  7
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  10,
+                       "type":  "timeseries",
+                       "title":  "GPU Utilization Over Time",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_gpu_utilization_percent",
+                                           "legendFormat":  "Utilization %",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "max":  100,
+                                                            "color":  {
+                                                                          "mode":  "continuous-GrYlRd"
+                                                                      },
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  30,
+                                                                           "gradientMode":  "scheme"
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  11,
+                       "type":  "timeseries",
+                       "title":  "GPU Memory Over Time",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_gpu_memory_used_mb",
+                                           "legendFormat":  "Used MB",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "cag_gpu_memory_total_mb",
+                                           "legendFormat":  "Total MB",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "decmbytes",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  20
+                                                                       }
+                                                        },
+                                           "overrides":  [
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "Total MB"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "custom.lineStyle",
+                                                                                        "value":  {
+                                                                                                      "fill":  "dash",
+                                                                                                      "dash":  [
+                                                                                                                   10,
+                                                                                                                   10
+                                                                                                               ]
+                                                                                                  }
+                                                                                    },
+                                                                                    {
+                                                                                        "id":  "custom.fillOpacity",
+                                                                                        "value":  0
+                                                                                    }
+                                                                                ]
+                                                             }
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  12,
+                       "type":  "timeseries",
+                       "title":  "Temperature Over Time",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  16
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_gpu_temperature_celsius",
+                                           "legendFormat":  "Â°C",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "celsius",
+                                                            "color":  {
+                                                                          "mode":  "continuous-GrYlRd"
+                                                                      },
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  25,
+                                                                           "gradientMode":  "scheme"
+                                                                       },
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  85
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  102,
+                       "type":  "row",
+                       "title":  "ðŸ§  Inference",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  24
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  20,
+                       "type":  "timeseries",
+                       "title":  "Inference Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  25
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(cag_inference_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(cag_inference_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p95",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.99, rate(cag_inference_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p99",
+                                           "refId":  "C"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  10
+                                                                       }
+                                                        }
+                                       },
+                       "options":  {
+                                       "legend":  {
+                                                      "displayMode":  "table",
+                                                      "calcs":  [
+                                                                    "mean",
+                                                                    "max",
+                                                                    "lastNotNull"
+                                                                ]
+                                                  }
+                                   }
+                   },
+                   {
+                       "id":  21,
+                       "type":  "timeseries",
+                       "title":  "Token Generation Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  25
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(cag_tokens_generated_total[$interval])",
+                                           "legendFormat":  "Tokens/s",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "color":  {
+                                                                          "fixedColor":  "semi-dark-blue",
+                                                                          "mode":  "fixed"
+                                                                      },
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  30
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  22,
+                       "type":  "timeseries",
+                       "title":  "CAG First Token Latency (TTFT)",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  33
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(gateway_cag_first_token_seconds_bucket[$interval]))",
+                                           "legendFormat":  "TTFT p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(gateway_cag_first_token_seconds_bucket[$interval]))",
+                                           "legendFormat":  "TTFT p95",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       },
+                       "options":  {
+                                       "legend":  {
+                                                      "displayMode":  "table",
+                                                      "calcs":  [
+                                                                    "mean",
+                                                                    "max"
+                                                                ]
+                                                  }
+                                   }
+                   },
+                   {
+                       "id":  23,
+                       "type":  "stat",
+                       "title":  "Total Tokens Generated",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  6,
+                                       "x":  12,
+                                       "y":  33
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "cag_tokens_generated_total",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "fixedColor":  "purple",
+                                                                          "mode":  "fixed"
+                                                                      }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  24,
+                       "type":  "stat",
+                       "title":  "Total CAG Queries",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  6,
+                                       "x":  18,
+                                       "y":  33
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_cag_queries_total",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "fixedColor":  "blue",
+                                                                          "mode":  "fixed"
+                                                                      }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area"
+                                   }
+                   }
+               ],
+    "schemaVersion":  39,
+    "version":  1
+}

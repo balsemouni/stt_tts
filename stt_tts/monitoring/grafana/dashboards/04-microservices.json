@@ -1,0 +1,707 @@
+{
+    "uid":  "asknova-microservices",
+    "title":  "AskNova â€” 04 Microservices",
+    "description":  "Per-service HTTP metrics: Auth, Sessions, Messages, TTS",
+    "tags":  [
+                 "asknova",
+                 "microservices",
+                 "http"
+             ],
+    "timezone":  "browser",
+    "refresh":  "10s",
+    "time":  {
+                 "from":  "now-1h",
+                 "to":  "now"
+             },
+    "templating":  {
+                       "list":  [
+                                    {
+                                        "name":  "interval",
+                                        "type":  "interval",
+                                        "query":  "10s,30s,1m,5m",
+                                        "current":  {
+                                                        "text":  "30s",
+                                                        "value":  "30s"
+                                                    }
+                                    }
+                                ]
+                   },
+    "panels":  [
+                   {
+                       "id":  100,
+                       "type":  "row",
+                       "title":  "ðŸ” Auth Service (8006)",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  0
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  1,
+                       "type":  "stat",
+                       "title":  "Auth Status",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  0,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "auth_up",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "mappings":  [
+                                                                             {
+                                                                                 "type":  "value",
+                                                                                 "options":  {
+                                                                                                 "1":  {
+                                                                                                           "text":  "UP",
+                                                                                                           "color":  "green"
+                                                                                                       },
+                                                                                                 "0":  {
+                                                                                                           "text":  "DOWN",
+                                                                                                           "color":  "red"
+                                                                                                       }
+                                                                                             }
+                                                                             }
+                                                                         ]
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none"
+                                   }
+                   },
+                   {
+                       "id":  2,
+                       "type":  "timeseries",
+                       "title":  "Auth Request Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  4,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(auth_http_requests_total[$interval])",
+                                           "legendFormat":  "Total req/s",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "rate(auth_http_requests_total{status=~\"5..\"}[$interval])",
+                                           "legendFormat":  "5xx/s",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "reqps",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  3,
+                       "type":  "timeseries",
+                       "title":  "Auth Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  14,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(auth_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(auth_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p95",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.99, rate(auth_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p99",
+                                           "refId":  "C"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  10
+                                                                       }
+                                                        }
+                                       },
+                       "options":  {
+                                       "legend":  {
+                                                      "displayMode":  "table",
+                                                      "calcs":  [
+                                                                    "mean",
+                                                                    "max"
+                                                                ]
+                                                  }
+                                   }
+                   },
+                   {
+                       "id":  101,
+                       "type":  "row",
+                       "title":  "ðŸ’¬ Sessions Service (8005)",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  7
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  10,
+                       "type":  "stat",
+                       "title":  "Sessions Status",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  0,
+                                       "y":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "sessions_up",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "mappings":  [
+                                                                             {
+                                                                                 "type":  "value",
+                                                                                 "options":  {
+                                                                                                 "1":  {
+                                                                                                           "text":  "UP",
+                                                                                                           "color":  "green"
+                                                                                                       },
+                                                                                                 "0":  {
+                                                                                                           "text":  "DOWN",
+                                                                                                           "color":  "red"
+                                                                                                       }
+                                                                                             }
+                                                                             }
+                                                                         ]
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none"
+                                   }
+                   },
+                   {
+                       "id":  11,
+                       "type":  "timeseries",
+                       "title":  "Sessions Request Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  4,
+                                       "y":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(sessions_http_requests_total[$interval])",
+                                           "legendFormat":  "Total req/s",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "rate(sessions_http_requests_total{status=~\"5..\"}[$interval])",
+                                           "legendFormat":  "5xx/s",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "reqps",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  12,
+                       "type":  "timeseries",
+                       "title":  "Sessions Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  14,
+                                       "y":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(sessions_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(sessions_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p95",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  10
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  102,
+                       "type":  "row",
+                       "title":  "ðŸ“¨ Messages Service (8003)",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  14
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  20,
+                       "type":  "stat",
+                       "title":  "Messages Status",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  0,
+                                       "y":  15
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "messages_up",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "mappings":  [
+                                                                             {
+                                                                                 "type":  "value",
+                                                                                 "options":  {
+                                                                                                 "1":  {
+                                                                                                           "text":  "UP",
+                                                                                                           "color":  "green"
+                                                                                                       },
+                                                                                                 "0":  {
+                                                                                                           "text":  "DOWN",
+                                                                                                           "color":  "red"
+                                                                                                       }
+                                                                                             }
+                                                                             }
+                                                                         ]
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none"
+                                   }
+                   },
+                   {
+                       "id":  21,
+                       "type":  "timeseries",
+                       "title":  "Messages Request Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  4,
+                                       "y":  15
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(messages_http_requests_total[$interval])",
+                                           "legendFormat":  "Total req/s",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "rate(messages_http_requests_total{status=~\"5..\"}[$interval])",
+                                           "legendFormat":  "5xx/s",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "reqps",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  22,
+                       "type":  "timeseries",
+                       "title":  "Messages Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  14,
+                                       "y":  15
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(messages_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(messages_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p95",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  10
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  103,
+                       "type":  "row",
+                       "title":  "ðŸŒ Gateway (8090)",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  21
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  30,
+                       "type":  "stat",
+                       "title":  "Gateway Status",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  4,
+                                       "x":  0,
+                                       "y":  22
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_up",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "mappings":  [
+                                                                             {
+                                                                                 "type":  "value",
+                                                                                 "options":  {
+                                                                                                 "1":  {
+                                                                                                           "text":  "UP",
+                                                                                                           "color":  "green"
+                                                                                                       },
+                                                                                                 "0":  {
+                                                                                                           "text":  "DOWN",
+                                                                                                           "color":  "red"
+                                                                                                       }
+                                                                                             }
+                                                                             }
+                                                                         ]
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none"
+                                   }
+                   },
+                   {
+                       "id":  31,
+                       "type":  "timeseries",
+                       "title":  "Gateway Request Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  4,
+                                       "y":  22
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(gateway_http_requests_total[$interval])",
+                                           "legendFormat":  "Total req/s",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "rate(gateway_http_requests_total{status=~\"5..\"}[$interval])",
+                                           "legendFormat":  "5xx/s",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "reqps",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  32,
+                       "type":  "timeseries",
+                       "title":  "Gateway In-Flight",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  10,
+                                       "x":  14,
+                                       "y":  22
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_http_requests_in_flight",
+                                           "legendFormat":  "In-flight",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  25
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  104,
+                       "type":  "row",
+                       "title":  "ðŸ”Š TTS Synthesis (via Gateway)",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  28
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  40,
+                       "type":  "timeseries",
+                       "title":  "TTS Synthesis Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  29
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(gateway_tts_synth_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(gateway_tts_synth_seconds_bucket[$interval]))",
+                                           "legendFormat":  "p95",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       },
+                       "options":  {
+                                       "legend":  {
+                                                      "displayMode":  "table",
+                                                      "calcs":  [
+                                                                    "mean",
+                                                                    "max"
+                                                                ]
+                                                  }
+                                   }
+                   },
+                   {
+                       "id":  41,
+                       "type":  "timeseries",
+                       "title":  "TTS Chunks Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  29
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(gateway_tts_chunks_total[$interval])",
+                                           "legendFormat":  "Chunks/s",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops",
+                                                            "color":  {
+                                                                          "fixedColor":  "semi-dark-green",
+                                                                          "mode":  "fixed"
+                                                                      },
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  30
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  105,
+                       "type":  "row",
+                       "title":  "ðŸ“Š Cross-Service Comparison",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  36
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  50,
+                       "type":  "timeseries",
+                       "title":  "All Services â€” In-Flight Requests",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  37
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_http_requests_in_flight",
+                                           "legendFormat":  "Gateway",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "auth_http_requests_in_flight",
+                                           "legendFormat":  "Auth",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "expr":  "sessions_http_requests_in_flight",
+                                           "legendFormat":  "Sessions",
+                                           "refId":  "C"
+                                       },
+                                       {
+                                           "expr":  "messages_http_requests_in_flight",
+                                           "legendFormat":  "Messages",
+                                           "refId":  "D"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  51,
+                       "type":  "timeseries",
+                       "title":  "All Services â€” p95 Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  7,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  37
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(auth_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "Auth",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(sessions_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "Sessions",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(messages_http_request_duration_seconds_bucket[$interval]))",
+                                           "legendFormat":  "Messages",
+                                           "refId":  "C"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  15
+                                                                       }
+                                                        }
+                                       }
+                   }
+               ],
+    "schemaVersion":  39,
+    "version":  1
+}

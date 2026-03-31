@@ -1,0 +1,199 @@
+version: "3.8"
+
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║  AskNova AI — Full Stack Docker Compose                             ║
+# ║  All 7 services + PostgreSQL + Redis + Prometheus + Grafana          ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+
+x-common-env: &common-env
+  DATABASE_USER: postgres
+  DATABASE_PASSWORD: asknova123
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+
+services:
+
+  # ── Infrastructure ─────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: asknova-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: asknova123
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: asknova-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Auth Service (8006) ────────────────────────────────────────────────
+
+  auth:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.auth
+    container_name: asknova-auth
+    environment:
+      <<: *common-env
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-changeme-use-a-real-secret}
+    ports:
+      - "8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Sessions Service (8005) ────────────────────────────────────────────
+
+  sessions:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sessions
+    container_name: asknova-sessions
+    environment:
+      <<: *common-env
+      USER_SERVICE_URL: http://auth:8006
+      REDIS_HOST: redis
+    ports:
+      - "8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Messages Service (8003) ────────────────────────────────────────────
+
+  messages:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.messages
+    container_name: asknova-messages
+    environment:
+      <<: *common-env
+      SESSION_SERVICE_URL: http://sessions:8005
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sessions:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── STT Service (8001) — Runs natively (needs GPU) ──────────────────────
+  # Start manually: cd stt_tts/stt && python main.py
+
+  # ── CAG / LLM Service (8000) — Runs natively (needs GPU) ──────────────
+  # Start manually: cd stt_tts/cag && python main.py
+
+  # ── Gateway (8090) — Orchestrator ──────────────────────────────────────
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    container_name: asknova-gateway
+    environment:
+      GATEWAY_HOST: "0.0.0.0"
+      GATEWAY_PORT: "8090"
+      STT_WS_URL: ws://host.docker.internal:8001/stream/mux
+      CAG_WS_URL: ws://host.docker.internal:8000/chat/ws
+      USER_SERVICE_URL: http://auth:8006
+      SESSION_SERVICE_URL: http://sessions:8005
+      MESSAGE_SERVICE_URL: http://messages:8003
+      AZURE_TTS_KEY: ${AZURE_TTS_KEY:-}
+      AZURE_TTS_ENDPOINT: ${AZURE_TTS_ENDPOINT:-https://francecentral.tts.speech.microsoft.com/cognitiveservices/v1}
+      AZURE_TTS_VOICE: ${AZURE_TTS_VOICE:-en-US-AriaNeural}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8090:8090"
+    depends_on:
+      - auth
+      - sessions
+      - messages
+    restart: unless-stopped
+
+  # ── Frontend (3000) ────────────────────────────────────────────────────
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: asknova-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+  # ── Monitoring ─────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: asknova-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./stt_tts/monitoring/prometheus-docker.yml:/etc/prometheus/prometheus.yml:ro
+      - ./stt_tts/monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - auth
+      - sessions
+      - messages
+      - gateway
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: asknova-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=asknova
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/00-master-dashboard.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./stt_tts/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./stt_tts/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: asknova-node-exporter
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:

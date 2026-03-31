@@ -1,0 +1,23 @@
+FROM python:3.10-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy shared monitoring module
+COPY stt_tts/monitoring /app/monitoring
+
+# Copy auth service
+COPY stt_tts/user_auth /app/user_auth
+
+# Install deps
+RUN pip install --no-cache-dir \
+    fastapi>=0.110.0 uvicorn[standard]>=0.29.0 \
+    sqlalchemy asyncpg httpx pydantic>=2.0.0 pydantic-settings \
+    python-jose[cryptography] passlib[bcrypt] \
+    prometheus-client python-dotenv
+
+WORKDIR /app/user_auth
+EXPOSE 8006
+CMD ["python", "main.py"]

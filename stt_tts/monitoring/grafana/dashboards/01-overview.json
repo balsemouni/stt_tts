@@ -1,0 +1,358 @@
+{
+    "uid":  "asknova-overview",
+    "title":  "AskNova â€” 01 Overview",
+    "description":  "High-level KPIs: sessions, latency averages, error rates",
+    "tags":  [
+                 "asknova",
+                 "overview"
+             ],
+    "timezone":  "browser",
+    "refresh":  "10s",
+    "time":  {
+                 "from":  "now-1h",
+                 "to":  "now"
+             },
+    "templating":  {
+                       "list":  [
+                                    {
+                                        "name":  "interval",
+                                        "type":  "interval",
+                                        "query":  "10s,30s,1m,5m",
+                                        "current":  {
+                                                        "text":  "30s",
+                                                        "value":  "30s"
+                                                    }
+                                    }
+                                ]
+                   },
+    "panels":  [
+                   {
+                       "id":  100,
+                       "type":  "row",
+                       "title":  "ðŸŽ¯ Key Metrics",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  0
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  1,
+                       "type":  "stat",
+                       "title":  "Active Voice Sessions",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  5,
+                                       "w":  6,
+                                       "x":  0,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_active_sessions",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  5
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  10
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "area",
+                                       "textMode":  "value_and_sparkline"
+                                   }
+                   },
+                   {
+                       "id":  2,
+                       "type":  "stat",
+                       "title":  "Avg E2E Latency",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  5,
+                                       "w":  6,
+                                       "x":  6,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(gateway_e2e_latency_seconds_bucket[$interval]))*1000",
+                                           "legendFormat":  "ms",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ms",
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  1500
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  3000
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  3,
+                       "type":  "stat",
+                       "title":  "Barge-In Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  5,
+                                       "w":  6,
+                                       "x":  12,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(gateway_barge_ins_total[$interval]) * 60",
+                                           "legendFormat":  "/min",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "opm",
+                                                            "color":  {
+                                                                          "fixedColor":  "orange",
+                                                                          "mode":  "fixed"
+                                                                      }
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  4,
+                       "type":  "stat",
+                       "title":  "Error Rate",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  5,
+                                       "w":  6,
+                                       "x":  18,
+                                       "y":  1
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "sum(rate(gateway_http_requests_total{status=~\"5..\"}[$interval])) / sum(rate(gateway_http_requests_total[$interval])) * 100",
+                                           "legendFormat":  "%",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percent",
+                                                            "thresholds":  {
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "yellow",
+                                                                                                 "value":  1
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  5
+                                                                                             }
+                                                                                         ]
+                                                                           },
+                                                            "max":  100
+                                                        }
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area"
+                                   }
+                   },
+                   {
+                       "id":  101,
+                       "type":  "row",
+                       "title":  "ðŸ“ˆ Trends",
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  6
+                                   },
+                       "collapsed":  false
+                   },
+                   {
+                       "id":  10,
+                       "type":  "timeseries",
+                       "title":  "Sessions Over Time",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  7
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_active_sessions",
+                                           "legendFormat":  "Active",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "increase(gateway_total_sessions[$interval])",
+                                           "legendFormat":  "New",
+                                           "refId":  "B"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  20
+                                                                       }
+                                                        }
+                                       }
+                   },
+                   {
+                       "id":  11,
+                       "type":  "timeseries",
+                       "title":  "Latency Trend",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  7
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(gateway_e2e_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "E2E p50",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.95, rate(gateway_e2e_latency_seconds_bucket[$interval]))",
+                                           "legendFormat":  "E2E p95",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "expr":  "histogram_quantile(0.50, rate(gateway_cag_first_token_seconds_bucket[$interval]))",
+                                           "legendFormat":  "CAG TTFT p50",
+                                           "refId":  "C"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s",
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  2,
+                                                                           "fillOpacity":  10
+                                                                       }
+                                                        }
+                                       },
+                       "options":  {
+                                       "legend":  {
+                                                      "displayMode":  "table",
+                                                      "calcs":  [
+                                                                    "mean",
+                                                                    "max",
+                                                                    "lastNotNull"
+                                                                ]
+                                                  }
+                                   }
+                   },
+                   {
+                       "id":  12,
+                       "type":  "timeseries",
+                       "title":  "Service Health Over Time",
+                       "datasource":  "Prometheus",
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  15
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "gateway_up",
+                                           "legendFormat":  "Gateway",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "expr":  "stt_up",
+                                           "legendFormat":  "STT",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "expr":  "cag_up",
+                                           "legendFormat":  "CAG",
+                                           "refId":  "C"
+                                       },
+                                       {
+                                           "expr":  "auth_up",
+                                           "legendFormat":  "Auth",
+                                           "refId":  "D"
+                                       },
+                                       {
+                                           "expr":  "sessions_up",
+                                           "legendFormat":  "Sessions",
+                                           "refId":  "E"
+                                       },
+                                       {
+                                           "expr":  "messages_up",
+                                           "legendFormat":  "Messages",
+                                           "refId":  "F"
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "min":  0,
+                                                            "max":  1,
+                                                            "custom":  {
+                                                                           "drawStyle":  "line",
+                                                                           "lineWidth":  3,
+                                                                           "fillOpacity":  30,
+                                                                           "spanNulls":  true
+                                                                       }
+                                                        }
+                                       }
+                   }
+               ],
+    "schemaVersion":  39,
+    "version":  1
+}

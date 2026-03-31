@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AskNova AI — Soutenance de Stage</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  :root {
+    --bg: #0a0a12;
+    --surface: #12121e;
+    --surface2: #1a1a2e;
+    --border: #2a2a40;
+    --text: #e4e4ef;
+    --text-dim: #8888a8;
+    --cyan: #06d6a0;
+    --violet: #8b5cf6;
+    --pink: #ec4899;
+    --orange: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ── Slide Container ── */
+  .deck { position: relative; width: 100vw; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0;
+    display: none; flex-direction: column;
+    padding: 60px 80px;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  .slide.active { display: flex; opacity: 1; }
+
+  /* ── Background Decorations ── */
+  .slide::before {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse at 20% 50%, rgba(6,214,160,0.06) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(139,92,246,0.06) 0%, transparent 50%);
+    pointer-events: none;
+  }
+  .slide::after {
+    content: '';
+    position: absolute; bottom:0; left:0; right:0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+  }
+
+  /* ── Typography ── */
+  h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 3.2rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--cyan), var(--violet));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 12px; line-height: 1.15;
+  }
+  h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 2rem; font-weight: 600;
+    color: var(--cyan); margin-bottom: 8px;
+  }
+  h3 {
+    font-size: 1.25rem; font-weight: 600;
+    color: var(--violet); margin-bottom: 6px;
+  }
+  p, li { font-size: 1.05rem; line-height: 1.7; color: var(--text); }
+  .subtitle { font-size: 1.3rem; color: var(--text-dim); margin-bottom: 32px; }
+  .small { font-size: 0.9rem; color: var(--text-dim); }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--surface2); padding: 2px 8px; border-radius: 4px;
+    font-size: 0.92rem; color: var(--cyan);
+  }
+
+  /* ── Layout Helpers ── */
+  .center { align-items: center; justify-content: center; text-align: center; }
+  .cols { display: grid; gap: 32px; flex: 1; align-content: start; }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .cols-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+  /* ── Cards ── */
+  .card {
+    background: rgba(18,18,30,0.8);
+    border: 1px solid var(--border);
+    border-radius: 16px; padding: 24px;
+    backdrop-filter: blur(12px);
+  }
+  .card.glow-cyan { border-color: rgba(6,214,160,0.3); box-shadow: 0 0 20px rgba(6,214,160,0.08); }
+  .card.glow-violet { border-color: rgba(139,92,246,0.3); box-shadow: 0 0 20px rgba(139,92,246,0.08); }
+  .card.glow-pink { border-color: rgba(236,72,153,0.3); box-shadow: 0 0 20px rgba(236,72,153,0.08); }
+  .card.glow-orange { border-color: rgba(245,158,11,0.3); box-shadow: 0 0 20px rgba(245,158,11,0.08); }
+  .card.glow-red { border-color: rgba(239,68,68,0.3); box-shadow: 0 0 20px rgba(239,68,68,0.08); }
+  .card.glow-blue { border-color: rgba(59,130,246,0.3); box-shadow: 0 0 20px rgba(59,130,246,0.08); }
+
+  /* ── Lists ── */
+  ul { list-style: none; padding-left: 0; }
+  ul li { position: relative; padding-left: 24px; margin-bottom: 10px; }
+  ul li::before {
+    content: '▸'; position: absolute; left: 0;
+    color: var(--cyan); font-weight: 700;
+  }
+  ul.violet li::before { color: var(--violet); }
+  ul.pink li::before { color: var(--pink); }
+  ul.orange li::before { color: var(--orange); }
+  ul.red li::before { color: var(--red); }
+
+  /* ── Progress Bars ── */
+  .progress-row { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+  .progress-label { width: 220px; font-size: 0.95rem; font-weight: 500; }
+  .progress-track {
+    flex: 1; height: 28px; background: var(--surface2);
+    border-radius: 14px; overflow: hidden; position: relative;
+  }
+  .progress-fill {
+    height: 100%; border-radius: 14px;
+    display: flex; align-items: center; justify-content: flex-end;
+    padding-right: 12px; font-size: 0.8rem; font-weight: 700; color: #fff;
+    transition: width 1s ease;
+  }
+  .fill-green { background: linear-gradient(90deg, #059669, var(--cyan)); }
+  .fill-yellow { background: linear-gradient(90deg, #d97706, var(--orange)); }
+  .fill-red { background: linear-gradient(90deg, #dc2626, var(--red)); }
+  .fill-violet { background: linear-gradient(90deg, #7c3aed, var(--violet)); }
+  .fill-cyan { background: linear-gradient(90deg, #0891b2, var(--cyan)); }
+
+  /* ── Architecture Diagram ── */
+  .arch-box {
+    padding: 14px 20px; border-radius: 12px; text-align: center;
+    font-weight: 600; font-size: 0.95rem;
+    border: 1px solid var(--border);
+  }
+  .arch-arrow { display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); font-size: 1.8rem; }
+
+  /* ── Tags / Badges ── */
+  .badge {
+    display: inline-block; padding: 4px 12px; border-radius: 20px;
+    font-size: 0.78rem; font-weight: 600; margin: 3px;
+  }
+  .badge-cyan { background: rgba(6,214,160,0.15); color: var(--cyan); }
+  .badge-violet { background: rgba(139,92,246,0.15); color: var(--violet); }
+  .badge-pink { background: rgba(236,72,153,0.15); color: var(--pink); }
+  .badge-orange { background: rgba(245,158,11,0.15); color: var(--orange); }
+  .badge-blue { background: rgba(59,130,246,0.15); color: var(--blue); }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 14px; font-size: 0.85rem; color: var(--text-dim);
+       border-bottom: 1px solid var(--border); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 10px 14px; font-size: 0.95rem; border-bottom: 1px solid rgba(42,42,64,0.5); }
+
+  /* ── Slide Footer ── */
+  .slide-footer {
+    position: absolute; bottom: 20px; left: 80px; right: 80px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.78rem; color: var(--text-dim);
+  }
+
+  /* ── Nav Controls ── */
+  .nav {
+    position: fixed; bottom: 24px; right: 30px; z-index: 100;
+    display: flex; gap: 10px;
+  }
+  .nav button {
+    width: 44px; height: 44px; border-radius: 12px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); cursor: pointer; font-size: 1.1rem;
+    transition: all 0.2s;
+  }
+  .nav button:hover { border-color: var(--cyan); color: var(--cyan); }
+
+  .slide-counter {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    font-size: 0.82rem; color: var(--text-dim); z-index: 100;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ── Animations ── */
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .slide.active .anim { animation: fadeInUp 0.6s ease forwards; }
+  .slide.active .anim-d1 { animation-delay: 0.1s; opacity: 0; }
+  .slide.active .anim-d2 { animation-delay: 0.2s; opacity: 0; }
+  .slide.active .anim-d3 { animation-delay: 0.3s; opacity: 0; }
+  .slide.active .anim-d4 { animation-delay: 0.4s; opacity: 0; }
+  .slide.active .anim-d5 { animation-delay: 0.5s; opacity: 0; }
+  .slide.active .anim-d6 { animation-delay: 0.6s; opacity: 0; }
+
+  /* ── Title Slide Special ── */
+  .title-slide h1 { font-size: 4rem; margin-bottom: 16px; }
+  .title-slide .logo-orb {
+    width: 120px; height: 120px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--cyan), var(--violet));
+    margin: 0 auto 32px; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 60px rgba(6,214,160,0.3), 0 0 120px rgba(139,92,246,0.15);
+    animation: pulse-orb 3s ease-in-out infinite;
+  }
+  @keyframes pulse-orb {
+    0%,100% { box-shadow: 0 0 60px rgba(6,214,160,0.3), 0 0 120px rgba(139,92,246,0.15); }
+    50% { box-shadow: 0 0 80px rgba(6,214,160,0.4), 0 0 160px rgba(139,92,246,0.25); }
+  }
+  .logo-orb svg { width: 60px; height: 60px; }
+
+  /* ── Metric Big Number ── */
+  .big-num {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 3rem; font-weight: 800; line-height: 1;
+  }
+  .big-num.cyan { color: var(--cyan); }
+  .big-num.violet { color: var(--violet); }
+  .big-num.pink { color: var(--pink); }
+  .big-num.orange { color: var(--orange); }
+
+  .section-num {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 6rem; font-weight: 800; line-height: 1;
+    background: linear-gradient(135deg, var(--cyan), var(--violet));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    opacity: 0.3; position: absolute; top: 40px; right: 80px;
+  }
+
+  .timeline { position: relative; padding-left: 32px; }
+  .timeline::before {
+    content: ''; position: absolute; left: 8px; top: 0; bottom: 0;
+    width: 2px; background: linear-gradient(var(--cyan), var(--violet));
+  }
+  .timeline-item { position: relative; margin-bottom: 20px; }
+  .timeline-item::before {
+    content: ''; position: absolute; left: -28px; top: 6px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--cyan); border: 2px solid var(--bg);
+  }
+  .timeline-item.done::before { background: var(--cyan); }
+  .timeline-item.current::before { background: var(--violet); box-shadow: 0 0 12px var(--violet); }
+  .timeline-item.todo::before { background: var(--border); }
+
+  .check { color: var(--cyan); }
+  .warn { color: var(--orange); }
+  .cross { color: var(--red); }
+
+  /* print / fullscreen */
+  @media print {
+    .slide { page-break-after: always; display: flex !important; opacity: 1 !important; position: relative; }
+    .nav, .slide-counter { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+<!-- ═══════════════════════  SLIDE 1 — TITLE  ═══════════════════════ -->
+<div class="slide center title-slide">
+  <div class="logo-orb anim">
+    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="50" cy="30" r="6" fill="white" opacity="0.9"/>
+      <circle cx="30" cy="55" r="5" fill="white" opacity="0.7"/>
+      <circle cx="70" cy="55" r="5" fill="white" opacity="0.7"/>
+      <circle cx="50" cy="75" r="4" fill="white" opacity="0.6"/>
+      <line x1="50" y1="30" x2="30" y2="55" stroke="white" stroke-width="1.5" opacity="0.5"/>
+      <line x1="50" y1="30" x2="70" y2="55" stroke="white" stroke-width="1.5" opacity="0.5"/>
+      <line x1="30" y1="55" x2="70" y2="55" stroke="white" stroke-width="1.5" opacity="0.4"/>
+      <line x1="30" y1="55" x2="50" y2="75" stroke="white" stroke-width="1.5" opacity="0.4"/>
+      <line x1="70" y1="55" x2="50" y2="75" stroke="white" stroke-width="1.5" opacity="0.4"/>
+    </svg>
+  </div>
+  <h1 class="anim anim-d1">AskNova AI</h1>
+  <p class="subtitle anim anim-d2">Plateforme d'IA Conversationnelle Vocale en Temps Réel</p>
+  <div class="anim anim-d3" style="margin-top:16px;">
+    <span class="badge badge-cyan">Full-Duplex</span>
+    <span class="badge badge-violet">Micro-services</span>
+    <span class="badge badge-pink">Temps Réel</span>
+    <span class="badge badge-blue">WebSocket</span>
+  </div>
+  <p class="small anim anim-d4" style="margin-top: 40px;">Soutenance de Stage — Mars 2026</p>
+</div>
+
+<!-- ═══════════════════════  SLIDE 2 — SOMMAIRE  ═══════════════════════ -->
+<div class="slide">
+  <h1 class="anim">Sommaire</h1>
+  <p class="subtitle anim anim-d1">Plan de la présentation (~20 min)</p>
+  <div class="cols cols-2 anim anim-d2" style="margin-top:20px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">① Contexte & Objectifs</h3>
+      <p class="small">Vision du projet, cas d'usage, périmètre fonctionnel</p>
+    </div>
+    <div class="card glow-violet">
+      <h3>② Architecture Technique</h3>
+      <p class="small">Pipeline Oreille-Cerveau-Voix, micro-services, stack technologique</p>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">③ État d'Avancement</h3>
+      <p class="small">Missions réalisées, pourcentage de complétion par module</p>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">④ Résultats Obtenus</h3>
+      <p class="small">Performances mesurées, métriques clés, démonstration</p>
+    </div>
+    <div class="card glow-red">
+      <h3 style="color:var(--red)">⑤ Difficultés Rencontrées</h3>
+      <p class="small">Défis techniques, solutions apportées, leçons apprises</p>
+    </div>
+    <div class="card glow-blue">
+      <h3 style="color:var(--blue)">⑥ Prochaines Étapes</h3>
+      <p class="small">Travaux restants, planning, objectifs à venir</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 3 — CONTEXTE  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">01</span>
+  <h2 class="anim">Contexte du Projet</h2>
+  <h1 class="anim anim-d1">Pourquoi AskNova AI ?</h1>
+  <div class="cols cols-2 anim anim-d2" style="margin-top: 24px;">
+    <div>
+      <h3 style="color:var(--cyan)">Le Constat</h3>
+      <ul>
+        <li>Les interfaces vocales IA existantes (Vapi, etc.) nécessitent un <strong>numéro de téléphone</strong></li>
+        <li>La latence des solutions cloud dépasse souvent <strong>3-5 secondes</strong></li>
+        <li>Pas de solution web accessible <strong>directement depuis le navigateur</strong></li>
+        <li>Manque de <strong>naturalité</strong> dans les conversations IA vocales</li>
+      </ul>
+    </div>
+    <div>
+      <h3>L'Objectif</h3>
+      <ul class="violet">
+        <li>Créer une expérience vocale <strong>comparable à une conversation humaine</strong></li>
+        <li>Latence totale <strong>&lt; 2 secondes</strong> (parole → réponse audio)</li>
+        <li>Communication <strong>full-duplex</strong> avec interruptions naturelles (barge-in)</li>
+        <li>Architecture <strong>micro-services</strong> scalable et conteneurisée</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card glow-cyan anim anim-d3" style="margin-top: 24px; text-align:center;">
+    <p style="font-size:1.15rem;">💡 <strong>Vision :</strong> Une plateforme web où l'utilisateur parle à une IA aussi naturellement qu'à un humain — en un clic, sans installation, sans numéro de téléphone.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 4 — PÉRIMÈTRE FONCTIONNEL  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">01</span>
+  <h2 class="anim">Périmètre Fonctionnel</h2>
+  <h1 class="anim anim-d1">23 Exigences Fonctionnelles</h1>
+  <div class="cols cols-4 anim anim-d2" style="margin-top: 20px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">Interface (EF1–EF7)</h3>
+      <ul style="font-size:0.88rem;">
+        <li>Conversation en 1 clic</li>
+        <li>Indicateurs visuels d'état</li>
+        <li>Transcription temps réel</li>
+        <li>Barge-in (interruption)</li>
+        <li>Visualisation audio</li>
+        <li>Gestion permissions micro</li>
+      </ul>
+    </div>
+    <div class="card glow-violet">
+      <h3>Pipeline Vocal (EF8–EF14)</h3>
+      <ul class="violet" style="font-size:0.88rem;">
+        <li>Capture haute fidélité</li>
+        <li>Détection fin de phrase (VAD)</li>
+        <li>STT temps réel &lt; 500ms</li>
+        <li>Réponse LLM contextuelle</li>
+        <li>Synthèse vocale naturelle</li>
+        <li>Streaming audio progressif</li>
+        <li>Contexte multi-tours</li>
+      </ul>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">Sessions (EF15–EF19)</h3>
+      <ul class="pink" style="font-size:0.88rem;">
+        <li>Création auto de session</li>
+        <li>Historique complet</li>
+        <li>Consultation passées</li>
+        <li>Métriques & analytics</li>
+        <li>Export (JSON, texte)</li>
+      </ul>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">Admin (EF20–EF23)</h3>
+      <ul class="orange" style="font-size:0.88rem;">
+        <li>Tableau de bord analytics</li>
+        <li>Logs détaillés pipeline</li>
+        <li>Config via .env</li>
+        <li>Clés API sécurisées</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 5 — ARCHITECTURE GLOBALE  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">02</span>
+  <h2 class="anim">Architecture Technique</h2>
+  <h1 class="anim anim-d1">Pipeline « Oreille — Cerveau — Voix »</h1>
+  <div style="display:flex; align-items:center; justify-content:center; gap:16px; margin-top:30px;" class="anim anim-d2">
+    <div class="arch-box" style="background:rgba(6,214,160,0.12); border-color:var(--cyan); min-width:140px;">
+      <div style="font-size:2rem;">🎤</div>
+      <div style="color:var(--cyan); font-size:1rem;">Navigateur</div>
+      <div class="small">Web Audio API<br>16kHz PCM</div>
+    </div>
+    <div class="arch-arrow">→</div>
+    <div class="arch-box" style="background:rgba(6,214,160,0.12); border-color:var(--cyan); min-width:140px;">
+      <div style="font-size:2rem;">👂</div>
+      <div style="color:var(--cyan); font-size:1rem;">Oreille (STT)</div>
+      <div class="small">Whisper + VAD<br>Port 8001</div>
+    </div>
+    <div class="arch-arrow">→</div>
+    <div class="arch-box" style="background:rgba(139,92,246,0.12); border-color:var(--violet); min-width:160px;">
+      <div style="font-size:2rem;">🧠</div>
+      <div style="color:var(--violet); font-size:1rem;">Cerveau (LLM)</div>
+      <div class="small">Llama 3.2-3B<br>KV Cache · Port 8000</div>
+    </div>
+    <div class="arch-arrow">→</div>
+    <div class="arch-box" style="background:rgba(236,72,153,0.12); border-color:var(--pink); min-width:140px;">
+      <div style="font-size:2rem;">🗣️</div>
+      <div style="color:var(--pink); font-size:1rem;">Voix (TTS)</div>
+      <div class="small">Azure Neural<br>SSML + Prosodie</div>
+    </div>
+    <div class="arch-arrow">→</div>
+    <div class="arch-box" style="background:rgba(6,214,160,0.12); border-color:var(--cyan); min-width:140px;">
+      <div style="font-size:2rem;">🔊</div>
+      <div style="color:var(--cyan); font-size:1rem;">Navigateur</div>
+      <div class="small">PCM 24kHz<br>Streaming</div>
+    </div>
+  </div>
+  <div style="display:flex; justify-content:center; margin-top:24px;" class="anim anim-d3">
+    <div class="arch-box" style="background:rgba(59,130,246,0.12); border-color:var(--blue); min-width:500px;">
+      <div style="color:var(--blue); font-size:1rem; font-weight:700;">🔀 Gateway Orchestrateur (Port 8090)</div>
+      <div class="small">WebSocket bidirectionnel · 6 workers concurrents · Barge-in · Echo suppression · Latency tracking</div>
+    </div>
+  </div>
+  <div class="cols cols-3 anim anim-d4" style="margin-top:20px;">
+    <div class="arch-box" style="background:rgba(245,158,11,0.08); border-color:var(--orange);">
+      <div style="color:var(--orange); font-size:0.9rem;">🔐 Auth (8006)</div>
+      <div class="small">JWT · Rate Limiting</div>
+    </div>
+    <div class="arch-box" style="background:rgba(245,158,11,0.08); border-color:var(--orange);">
+      <div style="color:var(--orange); font-size:0.9rem;">💬 Sessions (8005)</div>
+      <div class="small">CRUD · Redis Cache</div>
+    </div>
+    <div class="arch-box" style="background:rgba(245,158,11,0.08); border-color:var(--orange);">
+      <div style="color:var(--orange); font-size:0.9rem;">📝 Messages (8003)</div>
+      <div class="small">Historique complet</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 6 — STACK TECHNIQUE  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">02</span>
+  <h2 class="anim">Stack Technologique</h2>
+  <h1 class="anim anim-d1">7 Micro-services Indépendants</h1>
+  <div class="cols cols-2 anim anim-d2" style="margin-top: 20px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">Frontend</h3>
+      <p><span class="badge badge-cyan">React 19</span> <span class="badge badge-cyan">TypeScript</span> <span class="badge badge-cyan">Vite 6</span> <span class="badge badge-cyan">Tailwind CSS 4</span></p>
+      <ul style="font-size:0.9rem; margin-top:10px;">
+        <li>Web Audio API pour capture/playback</li>
+        <li>WebSocket natif pour streaming</li>
+        <li>Motion (Framer) pour animations</li>
+        <li>Design glassmorphique avec thème neural</li>
+      </ul>
+    </div>
+    <div class="card glow-violet">
+      <h3>Backend (Python)</h3>
+      <p><span class="badge badge-violet">FastAPI</span> <span class="badge badge-violet">Uvicorn</span> <span class="badge badge-violet">SQLAlchemy</span> <span class="badge badge-violet">PostgreSQL</span></p>
+      <ul class="violet" style="font-size:0.9rem; margin-top:10px;">
+        <li>Async/await natif (performances I/O)</li>
+        <li>WebSocket pour STT, Gateway, CAG</li>
+        <li>Redis pour cache sessions actives</li>
+        <li>JWT + Bcrypt pour authentification</li>
+      </ul>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">IA & ML</h3>
+      <p><span class="badge badge-pink">Whisper</span> <span class="badge badge-pink">Llama 3.2</span> <span class="badge badge-pink">Azure TTS</span> <span class="badge badge-pink">Silero VAD</span></p>
+      <ul class="pink" style="font-size:0.9rem; margin-top:10px;">
+        <li>faster-whisper (CTranslate2) pour STT</li>
+        <li>Llama 3.2-3B quantifié 4-bit (BitsAndBytes)</li>
+        <li>Flash Attention 2 + TF32</li>
+        <li>Azure Neural Voices avec SSML</li>
+      </ul>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">Infrastructure</h3>
+      <p><span class="badge badge-orange">PostgreSQL</span> <span class="badge badge-orange">Redis</span> <span class="badge badge-orange">RTX 4050</span></p>
+      <ul class="orange" style="font-size:0.9rem; margin-top:10px;">
+        <li>Base PostgreSQL pour persistance</li>
+        <li>Redis pour cache sessions actives</li>
+        <li>GPU RTX 4050 (6 Go VRAM)</li>
+        <li>Variables d'environnement (.env)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 7 — DÉTAIL STT  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">02</span>
+  <h2 class="anim">Deep Dive — Service STT (Oreille)</h2>
+  <h1 class="anim anim-d1">Pipeline de Traitement Audio</h1>
+  <div style="display:flex; align-items:center; justify-content:center; gap:12px; margin-top:24px;" class="anim anim-d2">
+    <div class="arch-box" style="background:rgba(6,214,160,0.1); border-color:var(--cyan); width:130px;">
+      <div class="small" style="color:var(--cyan); font-weight:600;">Audio PCM</div>
+      <div class="small">16kHz mono</div>
+    </div>
+    <div class="arch-arrow" style="font-size:1.2rem;">→</div>
+    <div class="arch-box" style="background:rgba(139,92,246,0.1); border-color:var(--violet); width:130px;">
+      <div class="small" style="color:var(--violet); font-weight:600;">AEC Gate</div>
+      <div class="small">Anti-écho</div>
+    </div>
+    <div class="arch-arrow" style="font-size:1.2rem;">→</div>
+    <div class="arch-box" style="background:rgba(236,72,153,0.1); border-color:var(--pink); width:130px;">
+      <div class="small" style="color:var(--pink); font-weight:600;">Voice Gate</div>
+      <div class="small">Empreinte vocale</div>
+    </div>
+    <div class="arch-arrow" style="font-size:1.2rem;">→</div>
+    <div class="arch-box" style="background:rgba(59,130,246,0.1); border-color:var(--blue); width:130px;">
+      <div class="small" style="color:var(--blue); font-weight:600;">AGC</div>
+      <div class="small">Gain auto</div>
+    </div>
+    <div class="arch-arrow" style="font-size:1.2rem;">→</div>
+    <div class="arch-box" style="background:rgba(245,158,11,0.1); border-color:var(--orange); width:130px;">
+      <div class="small" style="color:var(--orange); font-weight:600;">Silero VAD</div>
+      <div class="small">Détection voix</div>
+    </div>
+    <div class="arch-arrow" style="font-size:1.2rem;">→</div>
+    <div class="arch-box" style="background:rgba(6,214,160,0.15); border-color:var(--cyan); width:130px;">
+      <div class="small" style="color:var(--cyan); font-weight:600;">Whisper ASR</div>
+      <div class="small">Transcription</div>
+    </div>
+  </div>
+  <div class="cols cols-2 anim anim-d3" style="margin-top:28px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">Suppression d'Écho (3 couches)</h3>
+      <ul style="font-size:0.9rem;">
+        <li><strong>AEC Gate :</strong> Bloque l'audio pendant que l'IA parle + 600ms buffer</li>
+        <li><strong>Voice Gate :</strong> Empreinte spectrale mel — cosine similarity pour identifier la voix IA</li>
+        <li><strong>Text Echo Filter :</strong> Filtre au niveau texte les répétitions de l'IA</li>
+      </ul>
+    </div>
+    <div class="card glow-violet">
+      <h3>ASR Streaming Avancé</h3>
+      <ul class="violet" style="font-size:0.9rem;">
+        <li><strong>Live pass :</strong> Whisper toutes les 400ms sur fenêtre glissante</li>
+        <li><strong>Flush pass :</strong> Re-transcription complète avec beam=5 au silence</li>
+        <li><strong>Cursor tracking :</strong> Plus-long-préfixe-commun pour éliminer les doublons</li>
+        <li><strong>Barge-in :</strong> Interruption immédiate sur détection de voix réelle</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 8 — DÉTAIL CAG  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">02</span>
+  <h2 class="anim">Deep Dive — Service CAG (Cerveau)</h2>
+  <h1 class="anim anim-d1">Llama 3.2-3B — Inférence Optimisée</h1>
+  <div class="cols cols-2 anim anim-d2" style="margin-top: 20px;">
+    <div>
+      <div class="card glow-violet" style="margin-bottom:20px;">
+        <h3>Optimisations KV-Cache</h3>
+        <ul class="violet" style="font-size:0.9rem;">
+          <li><strong>Pré-computation :</strong> La base de connaissances est encodée en KV-cache au démarrage</li>
+          <li><strong>Troncature :</strong> Après chaque requête, le cache est tronqué à la longueur knowledge-base</li>
+          <li><strong>Persistance :</strong> Cache sauvegardé sur disque pour démarrage instantané</li>
+          <li><strong>Résultat :</strong> TTFT ~80-120ms au lieu de ~500ms+</li>
+        </ul>
+      </div>
+      <div class="card glow-cyan">
+        <h3 style="color:var(--cyan)">Mémoire Conversationnelle</h3>
+        <ul style="font-size:0.9rem;">
+          <li>Historique des 10 derniers tours</li>
+          <li>Profil utilisateur (prénom, préférences)</li>
+          <li>Extraction automatique du nom</li>
+          <li>Prompt système compressé (80 tokens)</li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <div class="card glow-pink" style="margin-bottom:20px;">
+        <h3 style="color:var(--pink)">Quantification 4-bit</h3>
+        <ul class="pink" style="font-size:0.9rem;">
+          <li>Modèle 3B paramètres en seulement <strong>~2.5 Go VRAM</strong></li>
+          <li>BitsAndBytes NF4 quantization</li>
+          <li>Flash Attention 2 (fallback eager)</li>
+          <li>TF32 activé pour accélération matmul</li>
+          <li>Décodage greedy (déterministe + rapide)</li>
+        </ul>
+      </div>
+      <div class="card glow-orange">
+        <h3 style="color:var(--orange)">Performances Mesurées</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:10px;">
+          <div style="text-align:center;">
+            <div class="big-num violet">80ms</div>
+            <div class="small">TTFT moyen</div>
+          </div>
+          <div style="text-align:center;">
+            <div class="big-num cyan">~25ms</div>
+            <div class="small">Par token</div>
+          </div>
+          <div style="text-align:center;">
+            <div class="big-num pink">2.5Go</div>
+            <div class="small">VRAM utilisée</div>
+          </div>
+          <div style="text-align:center;">
+            <div class="big-num orange">&lt;400ms</div>
+            <div class="small">P95 (50 tokens)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 9 — DÉTAIL GATEWAY  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">02</span>
+  <h2 class="anim">Deep Dive — Gateway Orchestrateur</h2>
+  <h1 class="anim anim-d1">6 Workers Concurrents par Client</h1>
+  <div class="cols cols-3 anim anim-d2" style="margin-top: 20px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">🎤 STT Loop</h3>
+      <p class="small">Connexion WebSocket vers le service STT. Reçoit les segments transcrits et les mots en temps réel. Gère le barge-in.</p>
+    </div>
+    <div class="card glow-violet">
+      <h3>🧠 CAG Loop</h3>
+      <p class="small">Envoie les requêtes au LLM. Reçoit les tokens en streaming. Accumulation tonale intelligente.</p>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">🗣️ Synth Worker</h3>
+      <p class="small">Convertit les chunks textuels en audio via Azure TTS. SSML avec prosodie adaptée au ton.</p>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">🔊 Play Worker</h3>
+      <p class="small">Stream les frames PCM vers le client. Notifie le STT quand l'IA parle (pour echo gate).</p>
+    </div>
+    <div class="card glow-blue">
+      <h3 style="color:var(--blue)">💓 Heartbeat</h3>
+      <p class="small">Ping/pong keep-alive pour maintenir la connexion WebSocket ouverte.</p>
+    </div>
+    <div class="card glow-red">
+      <h3 style="color:var(--red)">⏰ Idle Watchdog</h3>
+      <p class="small">Reset automatique après 120s d'inactivité. Libère les ressources GPU.</p>
+    </div>
+  </div>
+  <div class="card glow-violet anim anim-d3" style="margin-top:20px;">
+    <h3>Fonctionnalités Avancées</h3>
+    <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:8px;">
+      <span class="badge badge-cyan">Barge-in Detection</span>
+      <span class="badge badge-violet">Repetition Guard</span>
+      <span class="badge badge-pink">Tonal Chunking (SSML)</span>
+      <span class="badge badge-orange">3-Layer Echo Suppression</span>
+      <span class="badge badge-blue">Latency Tracking par Tour</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 10 — FRONTEND  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">02</span>
+  <h2 class="anim">Frontend — Interface Utilisateur</h2>
+  <h1 class="anim anim-d1">Design Voice-First Immersif</h1>
+  <div class="cols cols-3 anim anim-d2" style="margin-top: 20px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">Composants Principaux</h3>
+      <ul style="font-size:0.88rem;">
+        <li><strong>SplashScreen</strong> — Animation d'intro 4.6s avec logo neural</li>
+        <li><strong>Auth</strong> — Login/Signup avec animations neuronales</li>
+        <li><strong>Sidebar</strong> — Navigation sessions, collapsible</li>
+        <li><strong>ChatView</strong> — Interface chat + voice combinée</li>
+        <li><strong>VoiceOrb</strong> — Bouton micro 3D avec orbites</li>
+      </ul>
+    </div>
+    <div class="card glow-violet">
+      <h3>Visualisations Audio</h3>
+      <ul class="violet" style="font-size:0.88rem;">
+        <li><strong>Waveform</strong> — Canvas multi-couche 3 sinusoïdes</li>
+        <li><strong>VoiceVisualizer</strong> — 12 barres animées</li>
+        <li><strong>VoiceOrb</strong> — Scaling basé sur RMS</li>
+        <li>Dual Audio Context (capture 16kHz + playback 24kHz)</li>
+        <li>RMS combiné micro + TTS</li>
+      </ul>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">Protocole WebSocket</h3>
+      <ul class="pink" style="font-size:0.88rem;">
+        <li><code>0x01</code> — Frames audio binaires</li>
+        <li><code>0x02</code> — Messages de contrôle JSON</li>
+        <li>Types : <code>ready</code>, <code>segment</code>, <code>ai_token</code>, <code>barge_in</code></li>
+        <li>Streaming token-par-token pour perception basse latence</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card glow-blue anim anim-d3" style="margin-top:16px;">
+    <h3 style="color:var(--blue)">Hooks React</h3>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:8px;">
+      <span class="badge badge-cyan">useAuth</span>
+      <span class="badge badge-violet">useSessions</span>
+      <span class="badge badge-pink">useMessages</span>
+      <span class="badge badge-orange">useMetrics</span>
+      <span class="badge badge-blue">useChat</span>
+    </div>
+    <p class="small" style="margin-top:8px;">5 hooks custom couvrant l'authentification, les sessions, les messages, les métriques GPU/latence, et le chat streaming.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 11 — ÉTAT D'AVANCEMENT GLOBAL  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">03</span>
+  <h2 class="anim">État d'Avancement</h2>
+  <h1 class="anim anim-d1">Vue d'Ensemble — ~72% Complet</h1>
+  <div class="anim anim-d2" style="margin-top: 20px;">
+    <div class="progress-row">
+      <div class="progress-label">Interface Utilisateur</div>
+      <div class="progress-track"><div class="progress-fill fill-green" style="width:95%">95%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Pipeline Vocal (STT→LLM→TTS)</div>
+      <div class="progress-track"><div class="progress-fill fill-green" style="width:95%">95%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Qualité Audio</div>
+      <div class="progress-track"><div class="progress-fill fill-green" style="width:95%">95%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Architecture Micro-services</div>
+      <div class="progress-track"><div class="progress-fill fill-green" style="width:90%">90%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Performance / Latence</div>
+      <div class="progress-track"><div class="progress-fill fill-green" style="width:85%">85%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Gestion des Sessions</div>
+      <div class="progress-track"><div class="progress-fill fill-yellow" style="width:75%">75%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Sécurité (Auth, Rate Limit)</div>
+      <div class="progress-track"><div class="progress-fill fill-yellow" style="width:75%">75%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Base de Données</div>
+      <div class="progress-track"><div class="progress-fill fill-yellow" style="width:70%">70%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Administration / Analytics</div>
+      <div class="progress-track"><div class="progress-fill fill-yellow" style="width:50%">50%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Qualité Code / Tests</div>
+      <div class="progress-track"><div class="progress-fill fill-yellow" style="width:55%">55%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">RGPD / Confidentialité</div>
+      <div class="progress-track"><div class="progress-fill fill-red" style="width:40%">40%</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-label">Docker + CI/CD</div>
+      <div class="progress-track"><div class="progress-fill fill-red" style="width:0%; min-width:40px;">0%</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 12 — MISSIONS DÉTAILLÉES ✅  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">03</span>
+  <h2 class="anim">Missions Réalisées</h2>
+  <h1 class="anim anim-d1">Ce qui est Terminé <span class="check">✓</span></h1>
+  <div class="cols cols-2 anim anim-d2" style="margin-top: 16px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">Frontend Complet (React + TS)</h3>
+      <ul style="font-size:0.88rem;">
+        <li><span class="check">✓</span> Interface voice-first avec VoiceOrb 3D</li>
+        <li><span class="check">✓</span> Splashscreen animé + Auth (login/signup)</li>
+        <li><span class="check">✓</span> Sidebar avec gestion sessions</li>
+        <li><span class="check">✓</span> ChatView avec streaming token-par-token</li>
+        <li><span class="check">✓</span> Waveform canvas + visualisations audio</li>
+        <li><span class="check">✓</span> MetricsPanel (GPU + latence)</li>
+        <li><span class="check">✓</span> 5 hooks React custom</li>
+        <li><span class="check">✓</span> Couche API complète (auth, sessions, messages, voice)</li>
+      </ul>
+    </div>
+    <div class="card glow-violet">
+      <h3>Pipeline STT Avancé</h3>
+      <ul class="violet" style="font-size:0.88rem;">
+        <li><span class="check">✓</span> Whisper streaming (faster-whisper)</li>
+        <li><span class="check">✓</span> Silero VAD avec thread async</li>
+        <li><span class="check">✓</span> Triple suppression d'écho (AEC + Voice + Text)</li>
+        <li><span class="check">✓</span> AGC (contrôle automatique du gain)</li>
+        <li><span class="check">✓</span> DeepFilterNet (réduction de bruit optionnelle)</li>
+        <li><span class="check">✓</span> Barge-in par empreinte vocale</li>
+      </ul>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">LLM + TTS</h3>
+      <ul class="pink" style="font-size:0.88rem;">
+        <li><span class="check">✓</span> Llama 3.2-3B quantifié 4-bit</li>
+        <li><span class="check">✓</span> KV-Cache pré-calculé + persistant</li>
+        <li><span class="check">✓</span> Mémoire conversationnelle (10 tours)</li>
+        <li><span class="check">✓</span> Azure Neural TTS avec SSML + prosodie</li>
+        <li><span class="check">✓</span> Tonal chunking intelligent</li>
+        <li><span class="check">✓</span> Repetition guard anti-hallucination</li>
+      </ul>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">Services Persistance</h3>
+      <ul class="orange" style="font-size:0.88rem;">
+        <li><span class="check">✓</span> Auth service (JWT, refresh, rate-limit)</li>
+        <li><span class="check">✓</span> Session service (CRUD + Redis cache)</li>
+        <li><span class="check">✓</span> Message service (historique complet)</li>
+        <li><span class="check">✓</span> Gateway orchestrateur (6 workers)</li>
+        <li><span class="check">✓</span> PostgreSQL + SQLAlchemy async</li>
+        <li><span class="check">✓</span> Variables d'environnement (.env)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 13 — MISSIONS EN COURS / MANQUANTES  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">03</span>
+  <h2 class="anim">Missions Restantes</h2>
+  <h1 class="anim anim-d1">Ce qu'il Reste à Faire <span class="warn">⚠</span> <span class="cross">✗</span></h1>
+  <div class="cols cols-2 anim anim-d2" style="margin-top: 16px;">
+    <div class="card glow-red">
+      <h3 style="color:var(--red)">❌ Non Commencé (0%)</h3>
+      <ul class="red" style="font-size:0.9rem;">
+        <li><strong>Dockerfiles</strong> — Conteneurisation de chaque service</li>
+        <li><strong>docker-compose</strong> — Orchestration multi-services</li>
+        <li><strong>.gitlab-ci.yml</strong> — Pipeline CI/CD complet</li>
+        <li><strong>Export conversations</strong> — JSON / texte (EF19)</li>
+        <li><strong>HTTPS / WSS</strong> — Configuration TLS production</li>
+        <li><strong>Consentement audio</strong> — UI RGPD (ES10)</li>
+        <li><strong>Anonymisation analytics</strong> (ES13)</li>
+      </ul>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">⚠️ Partiellement Fait</h3>
+      <ul class="orange" style="font-size:0.9rem;">
+        <li><strong>Tests unitaires</strong> — ~15-20% actuellement (objectif &gt;70%)<br>
+          <span class="small">Seul test_all_cruds.py existe (CRUD uniquement)</span></li>
+        <li><strong>Migrations DB</strong> — Pas de Alembic configuré</li>
+        <li><strong>Dashboard analytics</strong> — MetricsPanel existe mais pas de stats agrégées</li>
+        <li><strong>Tracking coûts API</strong> — Latence mesurée, pas les coûts</li>
+        <li><strong>Logging JSON structuré</strong> — Pas uniforme partout</li>
+        <li><strong>Load testing</strong> — 10+ utilisateurs non validé</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card glow-blue anim anim-d3" style="margin-top:16px;">
+    <h3 style="color:var(--blue)">📊 Résumé Quantitatif</h3>
+    <div style="display:flex; gap:40px; margin-top:8px; justify-content:center;">
+      <div style="text-align:center;">
+        <div class="big-num cyan">38</div>
+        <div class="small">Exigences satisfaites</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="big-num orange">9</div>
+        <div class="small">Partiellement faites</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="big-num" style="color:var(--red);">9</div>
+        <div class="small">Non commencées</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="big-num violet">56</div>
+        <div class="small">Exigences totales</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 14 — RÉSULTATS: PERFORMANCES  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">04</span>
+  <h2 class="anim">Résultats Obtenus</h2>
+  <h1 class="anim anim-d1">Performances Mesurées du Pipeline</h1>
+  <div class="cols cols-4 anim anim-d2" style="margin-top: 24px;">
+    <div class="card glow-cyan" style="text-align:center;">
+      <div style="font-size:2.5rem; margin-bottom:8px;">👂</div>
+      <div class="big-num cyan">~124ms</div>
+      <div style="color:var(--cyan); font-weight:600; margin-top:4px;">Latence STT</div>
+      <div class="small" style="margin-top:8px;">Objectif : &lt; 500ms</div>
+      <div class="badge badge-cyan" style="margin-top:8px;">✓ 4x plus rapide</div>
+    </div>
+    <div class="card glow-violet" style="text-align:center;">
+      <div style="font-size:2.5rem; margin-bottom:8px;">🧠</div>
+      <div class="big-num violet">~80ms</div>
+      <div style="color:var(--violet); font-weight:600; margin-top:4px;">TTFT (LLM)</div>
+      <div class="small" style="margin-top:8px;">Objectif : &lt; 1000ms</div>
+      <div class="badge badge-violet" style="margin-top:8px;">✓ 12x plus rapide</div>
+    </div>
+    <div class="card glow-pink" style="text-align:center;">
+      <div style="font-size:2.5rem; margin-bottom:8px;">🗣️</div>
+      <div class="big-num pink">~350ms</div>
+      <div style="color:var(--pink); font-weight:600; margin-top:4px;">Latence TTS</div>
+      <div class="small" style="margin-top:8px;">Objectif : &lt; 500ms</div>
+      <div class="badge badge-pink" style="margin-top:8px;">✓ Dans l'objectif</div>
+    </div>
+    <div class="card glow-orange" style="text-align:center;">
+      <div style="font-size:2.5rem; margin-bottom:8px;">⚡</div>
+      <div class="big-num orange">~1.2s</div>
+      <div style="color:var(--orange); font-weight:600; margin-top:4px;">E2E Total</div>
+      <div class="small" style="margin-top:8px;">Objectif : &lt; 2000ms</div>
+      <div class="badge badge-orange" style="margin-top:8px;">✓ 40% sous l'objectif</div>
+    </div>
+  </div>
+  <div class="card glow-cyan anim anim-d3" style="margin-top:24px; text-align:center;">
+    <p style="font-size:1.1rem;">🎯 <strong>Tous les objectifs de latence sont atteints</strong> — la latence totale de ~1.2s est comparable au temps de réflexion humain naturel, créant une expérience de conversation fluide.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 15 — RÉSULTATS: CHIFFRES CLÉS  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">04</span>
+  <h2 class="anim">Résultats Obtenus</h2>
+  <h1 class="anim anim-d1">Chiffres Clés du Projet</h1>
+  <div class="cols cols-3 anim anim-d2" style="margin-top: 24px;">
+    <div class="card glow-cyan" style="text-align:center;">
+      <div class="big-num cyan">7</div>
+      <div style="font-weight:600; margin-top:4px;">Micro-services</div>
+      <div class="small">Frontend, Gateway, STT, CAG, TTS, Sessions, Messages, Auth</div>
+    </div>
+    <div class="card glow-violet" style="text-align:center;">
+      <div class="big-num violet">~50</div>
+      <div style="font-weight:600; margin-top:4px;">Fichiers source</div>
+      <div class="small">Python (backend) + TypeScript (frontend)</div>
+    </div>
+    <div class="card glow-pink" style="text-align:center;">
+      <div class="big-num pink">6</div>
+      <div style="font-weight:600; margin-top:4px;">Workers concurrents</div>
+      <div class="small">Par client connecté dans le gateway</div>
+    </div>
+    <div class="card glow-orange" style="text-align:center;">
+      <div class="big-num orange">3</div>
+      <div style="font-weight:600; margin-top:4px;">Couches anti-écho</div>
+      <div class="small">AEC Gate + Voice Gate + Text Filter</div>
+    </div>
+    <div class="card glow-blue" style="text-align:center;">
+      <div class="big-num" style="color:var(--blue);">2.5Go</div>
+      <div style="font-weight:600; margin-top:4px;">VRAM utilisée</div>
+      <div class="small">Llama 3.2-3B quantifié 4-bit</div>
+    </div>
+    <div class="card glow-red" style="text-align:center;">
+      <div class="big-num" style="color:var(--cyan);">24kHz</div>
+      <div style="font-weight:600; margin-top:4px;">Qualité audio TTS</div>
+      <div class="small">PCM 16-bit mono, streaming</div>
+    </div>
+  </div>
+  <div class="card glow-violet anim anim-d3" style="margin-top:20px;">
+    <h3>Technologies IA Intégrées</h3>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+      <span class="badge badge-cyan">Whisper (faster-whisper)</span>
+      <span class="badge badge-violet">Llama 3.2-3B</span>
+      <span class="badge badge-pink">Azure Neural TTS</span>
+      <span class="badge badge-orange">Silero VAD</span>
+      <span class="badge badge-blue">DeepFilterNet</span>
+      <span class="badge badge-cyan">BitsAndBytes 4-bit</span>
+      <span class="badge badge-violet">Flash Attention 2</span>
+      <span class="badge badge-pink">KV-Cache Precompute</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 16 — DIFFICULTÉS  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">05</span>
+  <h2 class="anim">Difficultés Rencontrées</h2>
+  <h1 class="anim anim-d1">Défis Techniques & Solutions</h1>
+  <div class="cols cols-2 anim anim-d2" style="margin-top: 16px;">
+    <div class="card glow-red">
+      <h3 style="color:var(--red)">🔄 Écho de la Voix IA</h3>
+      <p style="font-size:0.9rem; margin-bottom:8px;"><strong>Problème :</strong> Le microphone captait la voix de l'IA jouée par les haut-parleurs, créant une boucle de rétroaction — l'IA se « parlait à elle-même ».</p>
+      <p style="font-size:0.9rem;"><strong>Solution :</strong> Développement d'un système à 3 couches : gate temporelle (AEC), empreinte spectrale (Voice Gate), et filtre textuel. La combinaison élimine &gt;99% des échos.</p>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">⏱️ Latence du Pipeline</h3>
+      <p style="font-size:0.9rem; margin-bottom:8px;"><strong>Problème :</strong> Le pipeline séquentiel (STT → LLM → TTS) cumulait les latences, dépassant 4-5 secondes initialement.</p>
+      <p style="font-size:0.9rem;"><strong>Solution :</strong> Streaming à chaque étape + KV-cache precompute + tonal chunking. Le premier chunk audio arrive en ~1.2s au lieu de ~5s.</p>
+    </div>
+    <div class="card glow-violet">
+      <h3>🧠 Contrainte VRAM (6 Go)</h3>
+      <p style="font-size:0.9rem; margin-bottom:8px;"><strong>Problème :</strong> Le modèle LLM + Whisper + VAD doivent coexister sur un GPU RTX 4050 avec seulement 6 Go de VRAM.</p>
+      <p style="font-size:0.9rem;"><strong>Solution :</strong> Quantification NF4 (3B → 2.5 Go), CTranslate2 pour Whisper (optimisé), Silero VAD CPU-only. Total &lt; 5 Go VRAM.</p>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">🎤 Mots Perdus / Dupliqués (STT)</h3>
+      <p style="font-size:0.9rem; margin-bottom:8px;"><strong>Problème :</strong> Le streaming Whisper perdait des mots en fin de fenêtre ou les dupliquait entre les passes.</p>
+      <p style="font-size:0.9rem;"><strong>Solution :</strong> Algorithme « v2.0 » avec cursor tracking (plus-long-préfixe-commun), live pass toutes les 400ms, et flush pass avec beam=5 au silence.</p>
+    </div>
+  </div>
+  <div class="card glow-blue anim anim-d3" style="margin-top:14px;">
+    <h3 style="color:var(--blue)">🔗 Autres Défis</h3>
+    <ul style="font-size:0.88rem; columns:2;">
+      <li><strong>Barge-in :</strong> Distinguer l'écho IA d'une vraie interruption utilisateur</li>
+      <li><strong>Hallucinations LLM :</strong> Répétition de phrases → Repetition Guard</li>
+      <li><strong>Connexion WebSocket :</strong> Reconnexion automatique + backoff exponentiel</li>
+      <li><strong>Prosodie TTS :</strong> Détection automatique du ton pour SSML naturel</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 17 — LEÇONS APPRISES  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">05</span>
+  <h2 class="anim">Difficultés Rencontrées</h2>
+  <h1 class="anim anim-d1">Leçons Apprises</h1>
+  <div class="cols cols-3 anim anim-d2" style="margin-top: 24px;">
+    <div class="card glow-cyan">
+      <h3 style="color:var(--cyan)">💡 Streaming Partout</h3>
+      <p style="font-size:0.9rem;">La latence perçue dépend du <strong>premier byte</strong>, pas de la réponse complète. Streamer chaque étape du pipeline réduit la latence perçue de 70%.</p>
+    </div>
+    <div class="card glow-violet">
+      <h3>💡 Défense en Profondeur</h3>
+      <p style="font-size:0.9rem;">Un seul filtre anti-écho ne suffit jamais. La combinaison <strong>timing + acoustique + textuel</strong> est nécessaire pour une robustesse &gt;99%.</p>
+    </div>
+    <div class="card glow-pink">
+      <h3 style="color:var(--pink)">💡 KV-Cache = Game Changer</h3>
+      <p style="font-size:0.9rem;">Le pré-calcul du KV-cache pour le contexte statique (knowledge base) réduit le TTFT de <strong>500ms → 80ms</strong>. Technique sous-estimée mais critique.</p>
+    </div>
+    <div class="card glow-orange">
+      <h3 style="color:var(--orange)">💡 Quantification Well-Tuned</h3>
+      <p style="font-size:0.9rem;">La quantification 4-bit avec NF4 + Flash Attention 2 conserve <strong>~95% de la qualité</strong> du modèle tout en divisant la VRAM par 4.</p>
+    </div>
+    <div class="card glow-blue">
+      <h3 style="color:var(--blue)">💡 Micro-services = Agilité</h3>
+      <p style="font-size:0.9rem;">Chaque service peut être redémarré, mis à jour ou débogué <strong>indépendamment</strong>. Essentiel pour un pipeline aussi complexe.</p>
+    </div>
+    <div class="card glow-red">
+      <h3 style="color:var(--red)">💡 Test Tôt, Test Souvent</h3>
+      <p style="font-size:0.9rem;">Le manque initial de tests a rendu le débogage du pipeline difficile. Les tests CRUD rétrospectifs ont révélé <strong>plusieurs bugs cachés</strong>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 18 — PROCHAINES ÉTAPES  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">06</span>
+  <h2 class="anim">Prochaines Étapes</h2>
+  <h1 class="anim anim-d1">Planning des Travaux Restants</h1>
+  <div class="cols cols-2 anim anim-d2" style="margin-top: 16px;">
+    <div>
+      <div class="card glow-red" style="margin-bottom:16px;">
+        <h3 style="color:var(--red)">🔴 Priorité Haute</h3>
+        <div class="timeline">
+          <div class="timeline-item todo">
+            <strong>Dockerfiles + docker-compose</strong>
+            <div class="small">Conteneuriser les 7 services + PostgreSQL + Redis</div>
+          </div>
+          <div class="timeline-item todo">
+            <strong>Pipeline CI/CD GitLab</strong>
+            <div class="small">Build, test, lint, deploy automatisés</div>
+          </div>
+          <div class="timeline-item todo">
+            <strong>Tests unitaires (&gt;70%)</strong>
+            <div class="small">STT, Gateway, CAG, TTS, Frontend</div>
+          </div>
+          <div class="timeline-item todo">
+            <strong>Migrations Alembic</strong>
+            <div class="small">Versionner le schéma de base de données</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="card glow-orange" style="margin-bottom:16px;">
+        <h3 style="color:var(--orange)">🟡 Priorité Moyenne</h3>
+        <div class="timeline">
+          <div class="timeline-item todo">
+            <strong>RGPD : Consentement audio</strong>
+            <div class="small">UI de consentement explicite avant capture micro</div>
+          </div>
+          <div class="timeline-item todo">
+            <strong>HTTPS / WSS Production</strong>
+            <div class="small">Certificats TLS, reverse proxy nginx</div>
+          </div>
+          <div class="timeline-item todo">
+            <strong>Export conversations</strong>
+            <div class="small">Export JSON et texte depuis l'interface</div>
+          </div>
+          <div class="timeline-item todo">
+            <strong>Dashboard analytics agrégé</strong>
+            <div class="small">Stats : nb conversations, durée moyenne, coûts</div>
+          </div>
+        </div>
+      </div>
+      <div class="card glow-blue">
+        <h3 style="color:var(--blue)">🔵 Priorité Basse</h3>
+        <div class="timeline">
+          <div class="timeline-item todo">
+            <strong>Load testing (10+ users)</strong>
+            <div class="small">Validation performances sous charge</div>
+          </div>
+          <div class="timeline-item todo">
+            <strong>Anonymisation analytics</strong>
+            <div class="small">Conformité RGPD complète</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 19 — ROADMAP VISUELLE  ═══════════════════════ -->
+<div class="slide">
+  <span class="section-num">06</span>
+  <h2 class="anim">Prochaines Étapes</h2>
+  <h1 class="anim anim-d1">Feuille de Route</h1>
+  <div class="anim anim-d2" style="margin-top: 30px;">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:140px;">Phase</th>
+          <th>Tâches</th>
+          <th style="width:120px;">Statut</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-cyan">Phase 1</span></td>
+          <td>Architecture micro-services + Pipeline vocal complet (STT → LLM → TTS)</td>
+          <td><span class="check" style="font-weight:700;">✓ Terminé</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-cyan">Phase 2</span></td>
+          <td>Frontend React + Interface Voice-First + Visualisations audio</td>
+          <td><span class="check" style="font-weight:700;">✓ Terminé</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-cyan">Phase 3</span></td>
+          <td>Auth JWT + Sessions CRUD + Messages persistance + Redis cache</td>
+          <td><span class="check" style="font-weight:700;">✓ Terminé</span></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-violet">Phase 4</span></td>
+          <td>Optimisations avancées : Echo suppression 3 couches, KV-cache, Barge-in</td>
+          <td><span class="check" style="font-weight:700;">✓ Terminé</span></td>
+        </tr>
+        <tr style="background: rgba(245,158,11,0.05);">
+          <td><span class="badge badge-orange">Phase 5</span></td>
+          <td>Tests unitaires complets + Migrations Alembic + Export conversations</td>
+          <td><span class="warn" style="font-weight:700;">⚠ En cours</span></td>
+        </tr>
+        <tr style="background: rgba(239,68,68,0.05);">
+          <td><span class="badge badge-pink">Phase 6</span></td>
+          <td>Dockerisation complète + docker-compose + CI/CD GitLab</td>
+          <td><span class="cross" style="font-weight:700;">✗ À faire</span></td>
+        </tr>
+        <tr style="background: rgba(239,68,68,0.05);">
+          <td><span class="badge badge-pink">Phase 7</span></td>
+          <td>RGPD (consentement, anonymisation) + HTTPS/WSS + Analytics dashboard</td>
+          <td><span class="cross" style="font-weight:700;">✗ À faire</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card glow-cyan anim anim-d3" style="margin-top:24px; text-align:center;">
+    <p style="font-size:1.05rem;">📍 <strong>Position actuelle :</strong> Fin de Phase 4 → Début de Phase 5. Le cœur fonctionnel est opérationnel, les prochaines étapes concernent la qualité, la conformité et le déploiement.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════  SLIDE 20 — CONCLUSION  ═══════════════════════ -->
+<div class="slide center">
+  <div class="logo-orb anim" style="width:100px; height:100px;">
+    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="50" cy="30" r="6" fill="white" opacity="0.9"/>
+      <circle cx="30" cy="55" r="5" fill="white" opacity="0.7"/>
+      <circle cx="70" cy="55" r="5" fill="white" opacity="0.7"/>
+      <circle cx="50" cy="75" r="4" fill="white" opacity="0.6"/>
+      <line x1="50" y1="30" x2="30" y2="55" stroke="white" stroke-width="1.5" opacity="0.5"/>
+      <line x1="50" y1="30" x2="70" y2="55" stroke="white" stroke-width="1.5" opacity="0.5"/>
+      <line x1="30" y1="55" x2="70" y2="55" stroke="white" stroke-width="1.5" opacity="0.4"/>
+      <line x1="30" y1="55" x2="50" y2="75" stroke="white" stroke-width="1.5" opacity="0.4"/>
+      <line x1="70" y1="55" x2="50" y2="75" stroke="white" stroke-width="1.5" opacity="0.4"/>
+    </svg>
+  </div>
+  <h1 class="anim anim-d1" style="font-size:3.5rem;">Merci</h1>
+  <p class="subtitle anim anim-d2">AskNova AI — Plateforme d'IA Conversationnelle Vocale en Temps Réel</p>
+  <div class="anim anim-d3" style="margin-top:24px;">
+    <div style="display:flex; gap:40px; justify-content:center;">
+      <div style="text-align:center;">
+        <div class="big-num cyan">72%</div>
+        <div class="small">Avancement global</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="big-num violet">~1.2s</div>
+        <div class="small">Latence E2E</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="big-num pink">7</div>
+        <div class="small">Micro-services</div>
+      </div>
+    </div>
+  </div>
+  <div class="card anim anim-d4" style="margin-top:40px; max-width:600px; background:rgba(18,18,30,0.6); border-color:var(--border);">
+    <p style="font-size:1rem; text-align:center;">Questions ?</p>
+  </div>
+  <p class="small anim anim-d5" style="margin-top:20px;">Soutenance de Stage — Mars 2026</p>
+</div>
+
+</div><!-- end .deck -->
+
+<!-- ── Navigation ── -->
+<div class="slide-counter" id="counter">1 / 20</div>
+<div class="nav">
+  <button onclick="prev()" title="Précédent">◀</button>
+  <button onclick="next()" title="Suivant">▶</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let current = 0;
+
+  function show(n) {
+    slides.forEach(s => s.classList.remove('active'));
+    current = Math.max(0, Math.min(n, slides.length - 1));
+    slides[current].classList.add('active');
+    document.getElementById('counter').textContent = `${current + 1} / ${slides.length}`;
+  }
+
+  function next() { show(current + 1); }
+  function prev() { show(current - 1); }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+    if (e.key === 'Home') { e.preventDefault(); show(0); }
+    if (e.key === 'End') { e.preventDefault(); show(slides.length - 1); }
+    if (e.key === 'f' || e.key === 'F') {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+      else document.exitFullscreen();
+    }
+  });
+
+  // Touch support
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 50) { dx < 0 ? next() : prev(); }
+  });
+
+  show(0);
+</script>
+
+</body>
+</html>
